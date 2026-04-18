@@ -165,7 +165,16 @@ def classify_opener(content: str, prev_context: list[str] | None = None) -> tupl
             timeout=60,
         )
         resp.raise_for_status()
-        data = json.loads(resp.json().get("response", "{}"))
+        raw  = resp.json().get("response", "{}")
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            is_op  = re.search(r'"is_opener"\s*:\s*(true|false)', raw)
+            is_ns  = re.search(r'"is_new_scene"\s*:\s*(true|false)', raw)
+            data   = {
+                "is_opener":    is_op.group(1) == "true" if is_op else False,
+                "is_new_scene": is_ns.group(1) == "true" if is_ns else True,
+            }
         is_opener    = bool(data.get("is_opener", False))
         is_new_scene = bool(data.get("is_new_scene", True))
         return is_opener, is_new_scene
@@ -254,7 +263,11 @@ def analyze_batch(
             timeout=120,
         )
         resp.raise_for_status()
-        data = json.loads(resp.json().get("response", "{}"))
+        raw = resp.json().get("response", "{}")
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            data = _parse_analyze_json(raw)
         by_index = {item["index"]: item for item in data.get("messages", [])}
     except Exception as e:
         print(f"  [analyzer] batch error: {e}", file=sys.stderr)
@@ -279,6 +292,28 @@ def analyze_batch(
             "tags": [t for t in (r.get("tags") or []) if t in MSG_TAG_VOCAB],
         })
     return output
+
+
+def _parse_analyze_json(raw: str) -> dict:
+    """Fallback regex quand Mistral retourne du JSON malformé pour analyze_batch."""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        items = []
+        for m in re.finditer(r'"index"\s*:\s*(\d+)', raw):
+            idx   = int(m.group(1))
+            chunk = raw[m.start(): m.start() + 400]
+            is_rp  = re.search(r'"is_rp"\s*:\s*(true|false)', chunk)
+            is_ooc = re.search(r'"is_ooc"\s*:\s*(true|false)', chunk)
+            chars  = re.findall(r'"characters"\s*:\s*\[([^\]]*)\]', chunk)
+            item = {
+                "index":      idx,
+                "is_rp":      is_rp.group(1) == "true"  if is_rp  else False,
+                "is_ooc":     is_ooc.group(1) == "true" if is_ooc else False,
+                "characters": re.findall(r'"([^"]+)"', chars[0]) if chars else [],
+            }
+            items.append(item)
+        return {"messages": items}
 
 
 _CLASSIFY_SYSTEM = (
