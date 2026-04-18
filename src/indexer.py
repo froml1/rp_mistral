@@ -64,14 +64,18 @@ def index_exports(exports_dir: str, extract_lore: bool = False):
         n_scenes = len(scenes)
 
         for s_idx, scene in enumerate(scenes, 1):
-            print(f"  scène {s_idx}/{n_scenes}", end="\r")
+            print(f"  scène {s_idx}/{n_scenes} ({len(scene)} messages)")
             scene_text = raw_scene_to_text(scene, alias_map)
+            print(f"    scene_text: {len(scene_text)} chars")
             if len(scene_text.strip()) < 50:
+                print(f"    → skipped (trop court)")
                 continue
 
             synthesis = synthesize_scene(scene_text, alias_map=alias_map)
+            print(f"    synthesis: summary={len(synthesis['summary'])} chars, characters={synthesis['characters']}, themes={synthesis['themes']}")
 
             if not synthesis["summary"]:
+                print(f"    → skipped (summary vide, erreur Mistral ?)")
                 continue
 
             start_ts = scene[0].get("timestamp", "")
@@ -89,18 +93,21 @@ def index_exports(exports_dir: str, extract_lore: bool = False):
                 "scene_text": scene_text[:2000],
             }
 
-            # Document indexé = summary (dense, sémantique) + scène brute pour le contexte RAG
             indexed_text = synthesis["summary"] + "\n\n" + scene_text
             documents.append(Document(text=indexed_text, metadata=metadata))
             total_scenes += 1
 
-            if extract_lore and synthesis["summary"]:
+            if extract_lore:
                 source = f"{filepath.stem}:{start_ts}"
-                extract_and_merge(synthesis["summary"], source, verbose=True)
+                extract_and_merge(scene_text, source, verbose=True)
 
         print(f"  {n_scenes} scènes — {len(raw_messages)} messages      ")
 
     print(f"→ {total_scenes} scènes à indexer depuis {len(json_files)} fichier(s)")
+
+    if not documents:
+        print("Aucun document à indexer.")
+        return
 
     vector_store    = get_vector_store()
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
