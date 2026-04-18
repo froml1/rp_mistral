@@ -7,6 +7,7 @@ speaker segmentation, and structural tags.
 """
 
 import json
+import re
 import sys
 
 import requests
@@ -129,6 +130,25 @@ _CLASSIFY_SYSTEM = (
     "Tu retournes UNIQUEMENT du JSON valide, sans texte supplémentaire."
 )
 
+def _parse_classify_json(raw: str) -> dict:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        items = []
+        for m in re.finditer(
+            r'\{[^}]*"index"\s*:\s*(\d+)[^}]*"is_rp"\s*:\s*(true|false)[^}]*"is_ooc"\s*:\s*(true|false)[^}]*\}',
+            raw,
+        ):
+            items.append({"index": int(m.group(1)), "is_rp": m.group(2) == "true", "is_ooc": m.group(3) == "true"})
+        if not items:
+            for m in re.finditer(
+                r'\{[^}]*"index"\s*:\s*(\d+)[^}]*"is_ooc"\s*:\s*(true|false)[^}]*"is_rp"\s*:\s*(true|false)[^}]*\}',
+                raw,
+            ):
+                items.append({"index": int(m.group(1)), "is_rp": m.group(3) == "true", "is_ooc": m.group(2) == "true"})
+        return {"classifications": items}
+
+
 _CLASSIFY_PROMPT = """\
 Pour chaque message, indique s'il fait partie d'une scène de roleplay (is_rp: true) ou non (is_rp: false).
 Un commentaire méta entre ((...)) ou [OOC...] dans une scène est is_ooc: true (et is_rp: true).
@@ -143,19 +163,17 @@ Messages :
 {messages}"""
 
 
-def classify_messages(
+def classify_messages_batched(
     messages: list[dict],
     batch_size: int = BATCH_SIZE,
     context_overlap: int = 3,
-) -> list[dict]:
+):
     """
-    Lightweight RP/HRP classification — only returns {is_rp, is_ooc} per message.
-    Used by the purger; cheaper and more reliable than full analysis.
+    Generator — yields (start, end, results) for each batch processed.
+    results is a list of {is_rp, is_ooc} for messages[start:end].
     """
     if not messages:
-        return []
-
-    results: list[dict | None] = [None] * len(messages)
+        return
 
     for start in range(0, len(messages), batch_size):
         end = min(start + batch_size, len(messages))
@@ -175,22 +193,37 @@ def classify_messages(
                 timeout=120,
             )
             resp.raise_for_status()
-            data = json.loads(resp.json().get("response", "{}"))
+            raw = resp.json().get("response", "{}")
+            data = _parse_classify_json(raw)
             by_index = {item["index"]: item for item in data.get("classifications", [])}
         except Exception as e:
             print(f"  [analyzer] classify error: {e}", file=sys.stderr)
             by_index = {}
 
         offset = start - ctx_start
-        for j, local_j in enumerate(range(offset, len(batch))):
-            global_i = start + j
-            if global_i < len(messages):
-                r = by_index.get(local_j, {})
-                results[global_i] = {
-                    "is_rp":  bool(r.get("is_rp", False)),
-                    "is_ooc": bool(r.get("is_ooc", False)),
-                }
+        batch_results = []
+        for j in range(end - start):
+            r = by_index.get(offset + j, {})
+            batch_results.append({
+                "is_rp":  bool(r.get("is_rp", False)),
+                "is_ooc": bool(r.get("is_ooc", False)),
+            })
+        yield start, end, batch_results
 
+
+def classify_messages(
+    messages: list[dict],
+    batch_size: int = BATCH_SIZE,
+    context_overlap: int = 3,
+) -> list[dict]:
+    """
+    Lightweight RP/HRP classification — only returns {is_rp, is_ooc} per message.
+    Used by the purger; cheaper and more reliable than full analysis.
+    """
+    results: list[dict | None] = [None] * len(messages)
+    for start, end, batch_results in classify_messages_batched(messages, batch_size, context_overlap):
+        for j, r in enumerate(batch_results):
+            results[start + j] = r
     return [r if r is not None else {"is_rp": False, "is_ooc": False} for r in results]
 
 

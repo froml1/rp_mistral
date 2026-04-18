@@ -14,29 +14,42 @@ import json
 import sys
 from pathlib import Path
 
-from analyzer import classify_messages
+from analyzer import classify_messages_batched
 from preprocessing import load_messages
 
 
 OUTPUT_DIR = Path("data/exports_filtered")
 
 
-def purge_export(filepath: Path, verbose: bool = True) -> dict:
+def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
     raw_messages = load_messages(filepath)
-    print(len(raw_messages))
-    classifications = classify_messages(raw_messages)
-
-    rp_messages = [
-        msg for msg, clf in zip(raw_messages, classifications)
-        if clf["is_rp"] or clf["is_ooc"]
-    ]
+    total = len(raw_messages)
 
     if verbose:
-        total = len(raw_messages)
-        kept = len(rp_messages)
-        print(f"  {filepath.name}: {total} messages → {kept} RP kept, {total - kept} HRP dropped")
+        print(f"  {filepath.name}: {total} messages")
 
-    return {"messages": rp_messages}
+    kept = 0
+    first = True
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write('{"messages": [')
+        for start, end, batch_results in classify_messages_batched(raw_messages):
+            for msg, clf in zip(raw_messages[start:end], batch_results):
+                if clf["is_rp"] or clf["is_ooc"]:
+                    f.write(("" if first else ",") + "\n  ")
+                    json.dump(msg, f, ensure_ascii=False)
+                    first = False
+                    kept += 1
+            f.flush()
+            if verbose:
+                pct = end * 100 // total if total else 0
+                print(f"  {filepath.name}: {end}/{total} ({pct}%) — {kept} RP kept", end="\r")
+        f.write("\n]}")
+
+    if verbose:
+        print(f"  {filepath.name}: {total} → {kept} RP kept, {total - kept} HRP dropped      ")
+
+    return kept
 
 
 def purge_all(exports_dir: str = "data/exports"):
@@ -52,14 +65,10 @@ def purge_all(exports_dir: str = "data/exports"):
         print(f"No export files (.json / .csv) found in {exports_dir}")
         return
 
-    json_files = files
-
-    print(f"Purging {len(json_files)} file(s) → {OUTPUT_DIR}/")
-    for filepath in json_files:
-        filtered = purge_export(filepath)
+    print(f"Purging {len(files)} file(s) → {OUTPUT_DIR}/")
+    for filepath in files:
         out_path = OUTPUT_DIR / (filepath.stem + ".json")
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(filtered, f, ensure_ascii=False, indent=2)
+        purge_export(filepath, out_path)
 
     print(f"Done. Filtered exports in {OUTPUT_DIR}/")
     print(f"→ Run indexer on filtered exports:")
