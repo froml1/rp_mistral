@@ -8,6 +8,7 @@ import sys
 
 import requests
 
+from analyzer import compress_scene_text
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 LLM_MODEL = "mistral"
@@ -53,7 +54,7 @@ def tag_scene(scene_text: str) -> list[str]:
     """Calls Mistral to assign thematic tags to a scene. Falls back to [] on error."""
     prompt = _SYSTEM + "\n\n" + _PROMPT.format(
         vocab=", ".join(SCENE_TAG_VOCAB),
-        text=scene_text,
+        text=compress_scene_text(scene_text),
     )
     try:
         resp = requests.post(

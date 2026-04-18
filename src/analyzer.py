@@ -19,9 +19,45 @@ _SCENE_BREAK = re.compile(r'^[\-_*=~]{3,}\s*$')
 _PARENS      = re.compile(r'[()]')
 _RP_GAP_SECS = 300
 _NARRATIVE_WORD = re.compile(r'[a-zA-ZÀ-ÿ]{3,}')
+_STAR_CONTENT   = re.compile(r'\*([^*]+)\*')
+
+# ── Preprocessing for LLM input ───────────────────────────────────────────────
+_MENTION_RE      = re.compile(r'<@!?\d+>')
+_CUSTOM_EMOJI_RE = re.compile(r'<:\w+:\d+>')
+_URL_RE          = re.compile(r'https?://\S+')
+_UNICODE_EMOJI_RE = re.compile(
+    "[\U0001F300-\U0001F9FF\U00002700-\U000027BF\U0001FA00-\U0001FA6F\U0001F004\U0001F0CF]+",
+    flags=re.UNICODE,
+)
+_PUNCT_REPEAT_RE = re.compile(r'([!?])\1{2,}')
+_SPEAKER_LINE_RE = re.compile(r'^\[([^\]]+)\]\s*(.*)')
 
 
-_STAR_CONTENT = re.compile(r'\*([^*]+)\*')
+def preprocess_for_llm(text: str) -> str:
+    """Strip Discord artifacts, emojis, repeated punctuation, extra whitespace."""
+    text = _MENTION_RE.sub("", text)
+    text = _CUSTOM_EMOJI_RE.sub("", text)
+    text = _URL_RE.sub("", text)
+    text = _UNICODE_EMOJI_RE.sub("", text)
+    text = _PUNCT_REPEAT_RE.sub(r'\1', text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def compress_scene_text(text: str) -> str:
+    """Preprocess scene text: clean each line + merge consecutive same-speaker lines."""
+    merged: list[str] = []
+    for raw_line in text.splitlines():
+        line = preprocess_for_llm(raw_line)
+        if not line:
+            continue
+        m = _SPEAKER_LINE_RE.match(line)
+        if m and merged:
+            prev_m = _SPEAKER_LINE_RE.match(merged[-1])
+            if prev_m and prev_m.group(1) == m.group(1):
+                merged[-1] = f"[{m.group(1)}] {prev_m.group(2)} {m.group(2)}"
+                continue
+        merged.append(line)
+    return "\n".join(merged)
 
 def is_preflight_rp(content: str) -> bool:
     """
@@ -148,9 +184,10 @@ def classify_opener(content: str, prev_context: list[str] | None = None) -> tupl
     Retourne (is_opener, is_new_scene).
     prev_context : derniers messages de la scène précédente (pour détecter les reprises).
     """
+    content = preprocess_for_llm(content)
     if prev_context:
         ctx = "Contexte de la scène précédente :\n"
-        ctx += "\n".join(f"  {m}" for m in prev_context[-5:])
+        ctx += "\n".join(f"  {preprocess_for_llm(m)}" for m in prev_context[-5:])
         ctx += "\n\n"
     else:
         ctx = ""
@@ -249,7 +286,7 @@ def analyze_batch(
     aliases_str = ", ".join(f"{k}→{v}" for k, v in (alias_map or {}).items()) or "aucun"
     vocab_str = ", ".join(MSG_TAG_VOCAB)
     formatted = "\n".join(
-        f"[{i}] {_get_author(m)}: {m.get('content', '')}"
+        f"[{i}] {_get_author(m)}: {preprocess_for_llm(m.get('content', ''))}"
         for i, m in enumerate(messages)
     )
 

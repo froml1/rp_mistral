@@ -11,6 +11,8 @@ from pathlib import Path
 import requests
 import yaml
 
+from analyzer import compress_scene_text
+
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 LLM_MODEL = "mistral"
@@ -139,7 +141,7 @@ Scène :
 # ── Ollama call ───────────────────────────────────────────────────────────────
 
 def _call_mistral(text: str) -> dict:
-    prompt = EXTRACTION_SYSTEM + "\n\n" + EXTRACTION_PROMPT.format(text=text)
+    prompt = EXTRACTION_SYSTEM + "\n\n" + EXTRACTION_PROMPT.format(text=compress_scene_text(text))
     try:
         resp = requests.post(
             OLLAMA_URL,
@@ -192,17 +194,53 @@ def _merge_axis(existing: dict, new: dict) -> dict:
     return merged
 
 
+_CONFIDENCE_RANK = {"verified": 3, "high": 2, "low": 1, "llm": 0}
+
+
+def _conf_gt(a: str, b: str) -> bool:
+    return _CONFIDENCE_RANK.get(a, 0) > _CONFIDENCE_RANK.get(b, 0)
+
+
 def _merge_knowledge(existing_profile: dict, new_profile: dict, source: str) -> dict:
-    merged = dict(existing_profile)
-    for bucket in ("sait", "ne_sait_pas", "croit"):
-        existing_items = merged.get(bucket) or []
-        existing_descs = {item.get("description") for item in existing_items}
-        for item in new_profile.get(bucket) or []:
-            desc = item.get("description")
-            if desc and desc not in existing_descs:
-                existing_items.append({**item, "source": source, "confidence": "llm"})
-                existing_descs.add(desc)
-        merged[bucket] = existing_items
+    """
+    Merge per bucket. Contradiction = même entity dans deux buckets différents.
+    Si new_confidence > existing_confidence, déplacer vers le nouveau bucket.
+    """
+    merged = {b: list(existing_profile.get(b) or []) for b in ("sait", "ne_sait_pas", "croit")}
+
+    for new_bucket in ("sait", "ne_sait_pas", "croit"):
+        for item in new_profile.get(new_bucket) or []:
+            entity = item.get("entity")
+            desc   = item.get("description")
+            if not desc:
+                continue
+            new_conf = item.get("confidence", "llm")
+
+            # Cherche une contradiction : même entity (ou même desc) dans un autre bucket
+            contradiction_found = False
+            if entity:
+                for other_bucket in ("sait", "ne_sait_pas", "croit"):
+                    if other_bucket == new_bucket:
+                        continue
+                    for idx, existing in enumerate(merged[other_bucket]):
+                        if existing.get("entity") == entity:
+                            existing_conf = existing.get("confidence", "llm")
+                            if _conf_gt(new_conf, existing_conf):
+                                merged[other_bucket].pop(idx)
+                                merged[new_bucket].append({**item, "source": source, "confidence": new_conf})
+                            contradiction_found = True
+                            break
+                    if contradiction_found:
+                        break
+
+            if contradiction_found:
+                continue
+
+            # Pas de contradiction — ajout simple si description absente
+            existing_descs = {i.get("description") for i in merged[new_bucket]}
+            if desc not in existing_descs:
+                merged[new_bucket].append({**item, "source": source, "confidence": new_conf})
+
     return merged
 
 
@@ -211,8 +249,8 @@ def merge_into_lore(extracted: dict, source: str) -> int:
     Merges extracted dict into lore.yaml.
     - New nodes get confidence='llm' and state defaulting to 'est'.
     - Existing nodes: temporal state is allowed to degrade (est→fut) but not reverse.
-    - Relations dedup by (from, rel, to, state) — history across states is preserved.
-    - Character knowledge is union-merged per bucket (sait / ne_sait_pas / croit).
+    - Relations dedup by (from, rel, to) — contradiction (state différent) remplace si new_conf > existing_conf.
+    - Character knowledge : contradiction inter-bucket (même entity) remplace si new_conf > existing_conf.
     Returns count of new items added.
     """
     if not extracted:
@@ -287,20 +325,55 @@ def merge_into_lore(extracted: dict, source: str) -> int:
             added += 1
     lore["universe_rules"] = existing_rules
 
-    # Relations — dedup by (from, rel, to, state) to preserve temporal history
-    existing_rels: list = lore.get("relations") or []
-    existing_keys = {
-        (r.get("from"), r.get("rel"), r.get("to"), r.get("state", "est"))
-        for r in existing_rels
+    # Relations — dedup by (from, rel, to)
+    # Contradiction = même triplet, state différent → remplace si new_confidence > existing
+    # State identique → doublon, ignoré
+    # State différent + confidence égale/inférieure → garde les deux (progression temporelle possible)
+    def _rel_triplet(r: dict) -> tuple:
+        return (str(r.get("from") or ""), str(r.get("rel") or ""), str(r.get("to") or ""))
+
+    def _rel_key(r: dict) -> tuple:
+        return (*_rel_triplet(r), str(r.get("state") or "est"))
+
+    existing_rels: list = [r for r in (lore.get("relations") or []) if isinstance(r, dict)]
+    existing_by_triplet: dict[tuple, int] = {
+        _rel_triplet(r): i for i, r in enumerate(existing_rels)
     }
+    existing_keys = {_rel_key(r) for r in existing_rels}
+
     for rel in extracted.get("relations") or []:
-        state = rel.get("state", "est")
-        key = (rel.get("from"), rel.get("rel"), rel.get("to"), state)
-        if None in key[:3] or key in existing_keys:
+        if not isinstance(rel, dict):
             continue
-        existing_rels.append({**rel, "state": state, "source": source})
-        existing_keys.add(key)
-        added += 1
+        triplet = _rel_triplet(rel)
+        if "" in triplet:
+            continue
+        key = _rel_key(rel)
+        new_conf = rel.get("confidence", "llm")
+
+        if key in existing_keys:
+            continue  # doublon exact
+
+        if triplet in existing_by_triplet:
+            # Contradiction : même triplet, state différent
+            idx = existing_by_triplet[triplet]
+            existing_conf = existing_rels[idx].get("confidence", "llm")
+            if _conf_gt(new_conf, existing_conf):
+                existing_keys.discard(_rel_key(existing_rels[idx]))
+                existing_rels[idx] = {**rel, "source": source}
+                existing_keys.add(key)
+                existing_by_triplet[triplet] = idx
+                added += 1
+            # sinon : contradiction mais confidence inférieure → garder les deux
+            else:
+                existing_rels.append({**rel, "source": source})
+                existing_keys.add(key)
+                added += 1
+        else:
+            existing_rels.append({**rel, "source": source})
+            existing_keys.add(key)
+            existing_by_triplet[triplet] = len(existing_rels) - 1
+            added += 1
+
     lore["relations"] = existing_rels
 
     _save_lore(lore)
