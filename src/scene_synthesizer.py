@@ -31,20 +31,23 @@ SCENE_TAG_VOCAB: list[str] = [
 ]
 
 _SUMMARY_SYSTEM = (
-    "Tu es un analyste de scènes de roleplay narratif écrit. "
-    "Tu n'inventes rien : tu te bases uniquement sur ce qui est explicite dans la scène."
+    "Tu es un analyste expert de scènes de roleplay narratif écrit sur Discord. "
+    "Tu produis des analyses détaillées et précises. "
+    "Tu n'inventes rien : tu te bases uniquement sur ce qui est explicite ou clairement implicite dans la scène."
 )
 
 _SUMMARY_PROMPT = """\
-Résume exhaustivement cette scène de roleplay en prose. Tu dois couvrir :
-- chaque personnage présent, ce qu'il fait, ce qu'il dit, comment il réagit
-- les échanges et interactions entre personnages
-- les événements, révélations, tensions dramatiques
-- l'évolution de la situation du début à la fin de la scène
+Alias de personnages : {aliases}
 
-Ne laisse aucun personnage de côté. Sois complet et précis.
+Analyse cette scène de roleplay et rédige un compte-rendu détaillé en prose structurée. Couvre impérativement :
 
-Alias : {aliases}
+1. CONTEXTE : lieu, moment, situation initiale
+2. PERSONNAGES : pour chacun — ce qu'il fait physiquement, ce qu'il dit (cite les répliques importantes), son état émotionnel, ses intentions apparentes
+3. DYNAMIQUE : interactions entre personnages, tensions, alliances, conflits
+4. ÉVÉNEMENTS CLÉS : actions importantes, révélations, retournements
+5. ÉVOLUTION : comment la situation change du début à la fin
+
+Sois exhaustif. Ne saute aucun personnage, aucun échange significatif.
 
 Scène :
 ---
@@ -93,6 +96,7 @@ def synthesize_scene(
 
     aliases_str = ", ".join(f"{k}→{v}" for k, v in (alias_map or {}).items()) or "aucun"
     compressed  = compress_scene_text(scene_text)
+    print(f"    [synthesizer] scène compressée: {len(compressed)} chars (~{len(compressed)//4} tokens)")
 
     # ── Appel 1 : résumé prose libre ─────────────────────────────────────────
     summary = _call(
@@ -132,7 +136,7 @@ def _call(system: str, prompt: str, fmt: str | None, num_predict: int) -> str:
         "prompt": system + "\n\n" + prompt,
         "stream": False,
         "keep_alive": -1,
-        "options": {"temperature": 0, "top_k": 1, "num_predict": num_predict, "num_ctx": 4096},
+        "options": {"temperature": 0, "top_k": 1, "num_predict": num_predict, "num_ctx": 8192},
     }
     if fmt:
         payload["format"] = fmt

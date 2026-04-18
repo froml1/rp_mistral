@@ -141,16 +141,18 @@ Scène :
 # ── Ollama call ───────────────────────────────────────────────────────────────
 
 def _call_mistral(text: str) -> dict:
-    prompt = EXTRACTION_SYSTEM + "\n\n" + EXTRACTION_PROMPT.format(text=compress_scene_text(text))
+    prompt = EXTRACTION_SYSTEM + "\n\n" + EXTRACTION_PROMPT.format(text=text)
     try:
         resp = requests.post(
             OLLAMA_URL,
-            json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False},
-            timeout=120,
+            json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False,
+                  "keep_alive": -1,
+                  "options": {"temperature": 0, "top_k": 1, "num_predict": -1, "num_ctx": 8192}},
+            timeout=300,
         )
-        print(resp.json())
         resp.raise_for_status()
         raw = resp.json().get("response", "{}")
+        print(f"  [lore_extractor] réponse {len(raw)} chars")
         return json.loads(raw)
     except requests.RequestException as e:
         print(f"  [lore_extractor] Ollama error: {e}", file=sys.stderr)

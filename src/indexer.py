@@ -99,7 +99,7 @@ def index_exports(exports_dir: str, extract_lore: bool = False):
 
             if extract_lore:
                 source = f"{filepath.stem}:{start_ts}"
-                extract_and_merge(scene_text, source, verbose=True)
+                extract_and_merge(synthesis["summary"], source, verbose=True)
 
         print(f"  {n_scenes} scènes — {len(raw_messages)} messages      ")
 
