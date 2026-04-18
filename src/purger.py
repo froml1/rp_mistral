@@ -25,8 +25,8 @@ from preprocessing import load_messages
 
 
 OUTPUT_DIR        = Path("data/exports_filtered")
-_BLOCK_END_SECS   = 3600  # gap > 1h  → fin de bloc RP (contexte perdu)
-_SCENE_BREAK_SECS = 900   # gap > 15min → nouvelle scène dans le même bloc
+_BLOCK_END_SECS   = 3600  # gap > 1h   → fin de bloc, attend un nouvel opener
+_SCENE_BREAK_SECS = 1800  # gap > 30min → nouvelle scène, bloc reste actif
 
 
 def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
@@ -52,23 +52,26 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
             content = msg.get("content", "").strip()
             ts      = _parse_ts(msg.get("timestamp", ""))
 
-            # ── fin de bloc ou nouvelle scène selon le gap ───────────────
-            if block_active and last_ts and ts:
+            # ── gestion des gaps ──────────────────────────────────────────
+            if last_ts and ts:
                 gap = (ts - last_ts).total_seconds()
-                if gap > _BLOCK_END_SECS:
-                    block_active = False
-                    prev_context = []
-                elif gap > _SCENE_BREAK_SECS:
-                    # Même session mais pause longue → forcer une nouvelle scène
-                    block_active = False
+                if gap > 60:  # n'affiche que les gaps significatifs
+                    mins = int(gap // 60)
+                    if verbose:
+                        print(f"\n  [gap {mins}min] {'bloc actif' if block_active else 'hors bloc'} | scène {scene_id} | {ts.strftime('%Y-%m-%d %H:%M')}")
+                if block_active:
+                    if gap > _BLOCK_END_SECS:
+                        block_active = False
+                        prev_context = []
+                        if verbose:
+                            print(f"  → fin de bloc (gap {int(gap//60)}min > 60min)")
+                    elif gap > _SCENE_BREAK_SECS:
+                        scene_id += 1
+                        if verbose:
+                            print(f"  → nouvelle scène {scene_id} (gap {int(gap//60)}min > 30min, bloc reste actif)")
 
             if ts:
                 last_ts = ts
-
-            # ── fin de bloc : délimiteur de scène ─────────────────────────
-            if _SCENE_BREAK.match(content):
-                block_active = False
-                continue
 
             # ── preflight HRP : toujours éliminé (parens, smileys…) ───────
             if is_preflight_hrp(content):
@@ -77,14 +80,20 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
             # ── hors bloc : '*' + Mistral valide ouverture ────────────────
             if not block_active:
                 if is_preflight_rp(content):
+                    if verbose:
+                        print(f"  [preflight ok] {content[:60]}")
                     is_opener, _ = classify_opener(content, prev_context or None)
+                    if verbose:
+                        print(f"  [classify_opener] is_opener={is_opener}")
                     if is_opener:
                         block_active = True
                         scene_id += 1
                         prev_context = []
                         if verbose:
-                            print(f"\n  ↳ scène {scene_id} : {content[:55]}")
+                            print(f"  ↳ BLOC OUVERT — scène {scene_id} | {ts.strftime('%Y-%m-%d %H:%M') if ts else '?'} : {content[:55]}")
                     else:
+                        if verbose:
+                            print(f"  [rejeté] {content[:60]}")
                         continue
                 else:
                     continue
