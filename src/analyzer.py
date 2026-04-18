@@ -18,6 +18,22 @@ OLLAMA_URL   = "http://localhost:11434/api/generate"
 _SCENE_BREAK = re.compile(r'^[\-_*=~]{3,}\s*$')
 _PARENS      = re.compile(r'[()]')
 _RP_GAP_SECS = 300
+_OOC_FULL    = re.compile(r'^\s*(\(.*\)|\(\(.*\)\)|\[OOC[^\]]*\])\s*$', re.DOTALL | re.IGNORECASE)
+_NARRATIVE_WORD = re.compile(r'[a-zA-ZÀ-ÿ]{3,}')
+
+
+def _is_clearly_hrp(content: str) -> bool:
+    """True pour les messages manifestement HRP sans ambiguïté narrative."""
+    s = content.strip()
+    if not s:
+        return True
+    # Entièrement entre parenthèses / balises OOC
+    if _OOC_FULL.match(s):
+        return True
+    # Aucun mot de 3+ lettres : smileys, emojis, ponctuation seule
+    if not _NARRATIVE_WORD.search(s):
+        return True
+    return False
 
 
 def _parse_ts(ts: str) -> datetime | None:
@@ -53,7 +69,8 @@ def pre_classify_messages(messages: list[dict], seed_msg: dict | None = None) ->
     prev_is_rp: bool = seed_msg is not None
 
     for msg in messages:
-        if _SCENE_BREAK.match(msg.get("content", "").strip()):
+        content = msg.get("content", "").strip()
+        if _SCENE_BREAK.match(content) or _is_clearly_hrp(content):
             statuses.append("non_rp")
             prev_is_rp = False
         elif prev_is_rp and prev_msg is not None and _can_inherit_rp(msg, prev_msg):
