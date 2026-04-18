@@ -101,7 +101,11 @@ def synthesize_scene(
         print(f"  [synthesizer] ERREUR: {type(e).__name__}: {e}", file=sys.stderr)
         return _empty()
 
-    return _parse_text_response(raw)
+    result = _parse_text_response(raw)
+    print(f"    [synthesizer] parsed: summary={len(result['summary'])} chars, characters={result['characters']}")
+    if not result["summary"]:
+        print(f"    [synthesizer] RAW COMPLET:\n{raw}")
+    return result
 
 
 def _parse_text_response(raw: str) -> dict:
