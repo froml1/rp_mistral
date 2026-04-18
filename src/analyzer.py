@@ -159,7 +159,7 @@ def extend_rp_chain(messages: list[dict], statuses: list[str]) -> list[str]:
 
 
 LLM_MODEL = "mistral"
-BATCH_SIZE = 20
+BATCH_SIZE = 12
 _CACHE_DIR = Path("data/analysis_cache")
 
 _OPENER_SYSTEM = (
@@ -240,15 +240,61 @@ Alias : {aliases}
 Pour chaque message retourne :
 - characters : personnages actifs (noms canoniques)
 - referenced : personnages mentionnés mais non actifs
-- speaker_segments : [text, character|null, type=action|dialogue|narration]
+- segs : segments ordonnés [{{"c":character|null,"t":"a"|"d"|"n"}}] (a=action,d=dialogue,n=narration)
 - tags : max 2 parmi {vocab}
 
 Retour JSON strict :
-{{"messages":[{{"index":0,"characters":[],"referenced":[],"speaker_segments":[{{"text":"","character":null,"type":"narration"}}],"tags":[]}}]}}
+{{"messages":[{{"i":0,"characters":[],"referenced":[],"segs":[{{"c":null,"t":"n"}}],"tags":[]}}]}}
 
 Messages :
 {messages}
 """
+
+
+_SEG_SPLIT_RE = re.compile(r'(\*[^*]+\*|"[^"]*"|«[^»]*»)')
+_TYPE_MAP = {"a": "action", "d": "dialogue", "n": "narration"}
+
+
+def _reconstruct_segments(content: str, segs: list) -> list[dict]:
+    """
+    Reconstruit speaker_segments en découpant le contenu original selon les
+    marqueurs retournés par le LLM (character + type uniquement, sans texte).
+    Si segs est vide ou incohérent, fallback sur découpage regex *...* / "...".
+    """
+    if not content:
+        return []
+    valid = [s for s in segs if isinstance(s, dict)]
+    if not valid:
+        # fallback regex : alternance action/dialogue sur le contenu brut
+        parts = _SEG_SPLIT_RE.split(content.strip())
+        result = []
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            if part.startswith("*") and part.endswith("*"):
+                result.append({"text": part, "character": None, "type": "action"})
+            elif (part.startswith('"') and part.endswith('"')) or (part.startswith("«") and part.endswith("»")):
+                result.append({"text": part, "character": None, "type": "dialogue"})
+            else:
+                result.append({"text": part, "character": None, "type": "narration"})
+        return result or [{"text": content.strip(), "character": None, "type": "narration"}]
+
+    # Découpe le contenu en N parts selon le nombre de segments
+    if len(valid) == 1:
+        return [{"text": content.strip(), "character": valid[0].get("c"), "type": _TYPE_MAP.get(valid[0].get("t", "n"), "narration")}]
+
+    parts = _SEG_SPLIT_RE.split(content.strip())
+    parts = [p.strip() for p in parts if p.strip()]
+    result = []
+    for idx, seg in enumerate(valid):
+        text = parts[idx] if idx < len(parts) else ""
+        if text:
+            result.append({"text": text, "character": seg.get("c"), "type": _TYPE_MAP.get(seg.get("t", "n"), "narration")})
+    # Texte résiduel non couvert
+    for leftover in parts[len(valid):]:
+        result.append({"text": leftover, "character": None, "type": "narration"})
+    return result or [{"text": content.strip(), "character": None, "type": "narration"}]
 
 
 def _get_author(msg: dict) -> str:
@@ -299,10 +345,10 @@ def analyze_batch(
             json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False, "options": {
             "temperature": 0,
             "top_k": 1,
-            "num_predict": 1024,
+            "num_predict": 400,
             "num_ctx": 4096
         }},
-            timeout=180,
+            timeout=120,
         )
         resp.raise_for_status()
         raw = resp.json().get("response", "{}")
@@ -310,28 +356,24 @@ def analyze_batch(
             data = json.loads(raw)
         except json.JSONDecodeError:
             data = _parse_analyze_json(raw)
-        by_index = {item["index"]: item for item in data.get("messages", [])}
+        by_index = {
+            (item.get("i") if item.get("i") is not None else item.get("index")): item
+            for item in data.get("messages", [])
+        }
     except Exception as e:
         print(f"  [analyzer] batch error: {e}", file=sys.stderr)
         by_index = {}
 
     output = []
-    for i in range(len(messages)):
+    for i, msg in enumerate(messages):
         r = by_index.get(i, {})
+        segs = _reconstruct_segments(msg.get("content", ""), r.get("segs") or [])
         output.append({
             "is_rp":    bool(r.get("is_rp", False)),
             "is_ooc":   bool(r.get("is_ooc", False)),
             "characters": [str(c) for c in (r.get("characters") or [])],
             "referenced": [str(c) for c in (r.get("referenced") or [])],
-            "speaker_segments": [
-                {
-                    "text":      str(s.get("text", "")),
-                    "character": s.get("character"),
-                    "type":      s.get("type", "narration"),
-                }
-                for s in (r.get("speaker_segments") or [])
-                if isinstance(s, dict)
-            ],
+            "speaker_segments": segs,
             "tags": [t for t in (r.get("tags") or []) if t in MSG_TAG_VOCAB],
         })
     return output
