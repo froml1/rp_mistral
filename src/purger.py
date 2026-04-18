@@ -14,7 +14,7 @@ import json
 import sys
 from pathlib import Path
 
-from analyzer import classify_messages_batched, is_preflight_hrp, _can_inherit_rp, BATCH_SIZE, _parse_ts
+from analyzer import classify_messages_batched, is_preflight_hrp, is_preflight_rp, _can_inherit_rp, BATCH_SIZE, _parse_ts
 from datetime import datetime
 from preprocessing import load_messages
 
@@ -54,6 +54,15 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
             first = False
             kept += 1
 
+        processed = 0
+
+        def _progress() -> None:
+            pct = processed * 100 // total if total else 0
+            auto = kept - _progress.llm_kept
+            print(f"  {filepath.name}: {processed}/{total} ({pct}%) "
+                  f"— {kept} RP [{auto} auto, {_progress.llm_kept} LLM]", end="\r")
+        _progress.llm_kept = 0
+
         def flush_pending() -> None:
             nonlocal last_rp
             if not pending:
@@ -64,23 +73,39 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
             for msg, clf in zip(pending, results):
                 if clf["is_rp"]:
                     write_msg(msg)
-                    last_rp = msg          # nouvelle graine trouvée
+                    last_rp = msg
+                    _progress.llm_kept += 1
                 elif last_rp is not None:
                     last_rp = None         # chaîne rompue → retour en seed search
             pending.clear()
             f.flush()
             if verbose:
-                print(f"  {filepath.name}: {kept} RP trouvés…", end="\r")
+                _progress()
 
         for msg in candidates:
-            # Héritage direct si pas de pending et graine active
-            if last_rp is not None and not pending and _can_inherit_rp(msg, last_rp):
+            processed += 1
+            content = msg.get("content", "")
+
+            # Étoile → RP garanti, peut servir de graine
+            if is_preflight_rp(content):
+                if pending:
+                    flush_pending()
                 write_msg(msg)
                 last_rp = msg
+
+            # Héritage direct si graine active et pas de pending
+            elif last_rp is not None and not pending and _can_inherit_rp(msg, last_rp):
+                write_msg(msg)
+                last_rp = msg
+
+            # Incertain → batch Mistral
             else:
                 pending.append(msg)
                 if len(pending) >= BATCH_SIZE:
                     flush_pending()
+
+            if verbose and processed % 10 == 0:
+                _progress()
 
         flush_pending()
         f.write("\n]}")

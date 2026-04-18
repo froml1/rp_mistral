@@ -21,13 +21,17 @@ _RP_GAP_SECS = 300
 _NARRATIVE_WORD = re.compile(r'[a-zA-ZÀ-ÿ]{3,}')
 
 
+def is_preflight_rp(content: str) -> bool:
+    """Présence d'au moins une étoile hors parenthèses → RP garanti."""
+    s = content.strip()
+    return '*' in s and not _PARENS.search(s)
+
+
 def is_preflight_hrp(content: str) -> bool:
     """
     Preflight HRP — éliminé sans passer par Mistral.
-    Règles :
-      - vide ou séparateur de scène
-      - contient des parenthèses (marqueur OOC dans ce corpus)
-      - aucun mot de 3+ lettres (smileys, emojis, ponctuation seule)
+    Priorité : parens > séparateur > absence de mot narratif.
+    (L'étoile est testée avant dans purge_export.)
     """
     s = content.strip()
     if not s or _SCENE_BREAK.match(s):
