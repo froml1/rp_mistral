@@ -14,7 +14,7 @@ import json
 import sys
 from pathlib import Path
 
-from analyzer import analyze_messages
+from analyzer import classify_messages
 from preprocessing import load_messages
 
 
@@ -23,11 +23,11 @@ OUTPUT_DIR = Path("data/exports_filtered")
 
 def purge_export(filepath: Path, verbose: bool = True) -> dict:
     raw_messages = load_messages(filepath)
-    analyses = analyze_messages(raw_messages)
+    classifications = classify_messages(raw_messages)
 
     rp_messages = [
-        msg for msg, analysis in zip(raw_messages, analyses)
-        if analysis["is_rp"] or analysis["is_ooc"]
+        msg for msg, clf in zip(raw_messages, classifications)
+        if clf["is_rp"] or clf["is_ooc"]
     ]
 
     if verbose:

@@ -124,6 +124,76 @@ def analyze_batch(
     return output
 
 
+_CLASSIFY_SYSTEM = (
+    "Tu es un classificateur de messages Discord pour un jeu de rôle narratif. "
+    "Tu retournes UNIQUEMENT du JSON valide, sans texte supplémentaire."
+)
+
+_CLASSIFY_PROMPT = """\
+Pour chaque message, indique s'il fait partie d'une scène de roleplay (is_rp: true) ou non (is_rp: false).
+Un commentaire méta entre ((...)) ou [OOC...] dans une scène est is_ooc: true (et is_rp: true).
+
+Critères RP : actions entre *astérisques*, dialogues narratifs, descriptions de scène, style littéraire.
+Critères HRP : bavardage informel, liens, emojis excessifs, réactions courtes.
+
+Retourne exactement ce JSON :
+{{"classifications": [{{"index": 0, "is_rp": true, "is_ooc": false}}]}}
+
+Messages :
+{messages}"""
+
+
+def classify_messages(
+    messages: list[dict],
+    batch_size: int = BATCH_SIZE,
+    context_overlap: int = 3,
+) -> list[dict]:
+    """
+    Lightweight RP/HRP classification — only returns {is_rp, is_ooc} per message.
+    Used by the purger; cheaper and more reliable than full analysis.
+    """
+    if not messages:
+        return []
+
+    results: list[dict | None] = [None] * len(messages)
+
+    for start in range(0, len(messages), batch_size):
+        end = min(start + batch_size, len(messages))
+        ctx_start = max(0, start - context_overlap)
+        batch = messages[ctx_start:end]
+
+        formatted = "\n".join(
+            f"[{i}] {_get_author(m)}: {m.get('content', '')}"
+            for i, m in enumerate(batch)
+        )
+        prompt = _CLASSIFY_SYSTEM + "\n\n" + _CLASSIFY_PROMPT.format(messages=formatted)
+
+        try:
+            resp = requests.post(
+                OLLAMA_URL,
+                json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False},
+                timeout=120,
+            )
+            resp.raise_for_status()
+            data = json.loads(resp.json().get("response", "{}"))
+            by_index = {item["index"]: item for item in data.get("classifications", [])}
+        except Exception as e:
+            print(f"  [analyzer] classify error: {e}", file=sys.stderr)
+            by_index = {}
+
+        offset = start - ctx_start
+        for j, local_j in enumerate(range(offset, len(batch))):
+            global_i = start + j
+            if global_i < len(messages):
+                r = by_index.get(local_j, {})
+                results[global_i] = {
+                    "is_rp":  bool(r.get("is_rp", False)),
+                    "is_ooc": bool(r.get("is_ooc", False)),
+                }
+
+    return [r if r is not None else {"is_rp": False, "is_ooc": False} for r in results]
+
+
 def analyze_messages(
     messages: list[dict],
     alias_map: dict[str, str] | None = None,
