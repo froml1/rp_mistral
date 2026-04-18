@@ -7,6 +7,7 @@ Review both drafts, correct, then promote to personnages.yaml / lore.yaml.
 Usage: python src/bootstrap.py data/exports/
 """
 
+import csv
 import json
 import re
 import sys
@@ -69,6 +70,20 @@ OBJECT_CONTEXT_RE = re.compile(
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def load_export(path: Path) -> list[dict]:
+    if path.suffix.lower() == ".csv":
+        messages = []
+        with open(path, encoding="utf-8", newline="") as f:
+            for row in csv.DictReader(f):
+                author = (row.get("author") or row.get("Author") or "").strip()
+                content = (row.get("content") or row.get("Content") or "").strip()
+                timestamp = (row.get("timestamp") or row.get("Timestamp") or "").strip()
+                if content:
+                    messages.append({
+                        "author": {"name": author},
+                        "content": content,
+                        "timestamp": timestamp,
+                    })
+        return messages
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     return data.get("messages", data) if isinstance(data, dict) else data
@@ -133,10 +148,10 @@ def extract_objects(content: str) -> list[str]:
 
 def bootstrap(exports_dir: str):
     exports_path = Path(exports_dir)
-    json_files = list(exports_path.glob("**/*.json"))
+    json_files = list(exports_path.glob("**/*.json")) + list(exports_path.glob("**/*.csv"))
 
     if not json_files:
-        print(f"No JSON files found in {exports_dir}")
+        print(f"No export files found in {exports_dir}")
         return
 
     author_characters: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -250,7 +265,7 @@ if __name__ == "__main__":
         alias_map = build_alias_map(config)
         alias_map.update(lore.character_aliases())
 
-        for filepath in Path(exports_dir).glob("**/*.json"):
+        for filepath in list(Path(exports_dir).glob("**/*.json")) + list(Path(exports_dir).glob("**/*.csv")):
             messages = process_export(filepath, config, lore=lore)
             scenes = group_into_scenes(messages)
             pairs = [

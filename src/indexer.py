@@ -50,7 +50,7 @@ def index_exports(exports_dir: str, extract_lore: bool = False, tag_scenes: bool
     setup_settings()
     config = load_config()
     exports_path = Path(exports_dir)
-    json_files = list(exports_path.glob("**/*.json"))
+    json_files = list(exports_path.glob("**/*.json")) + list(exports_path.glob("**/*.csv"))
 
     if not json_files:
         print(f"No exports found in {exports_dir}")
