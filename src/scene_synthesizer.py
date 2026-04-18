@@ -47,7 +47,10 @@ Analyse cette scène de roleplay et rédige un compte-rendu détaillé en prose 
 4. ÉVÉNEMENTS CLÉS : actions importantes, révélations, retournements
 5. ÉVOLUTION : comment la situation change du début à la fin
 
-Sois exhaustif. Ne saute aucun personnage, aucun échange significatif.
+Règles :
+- Sois exhaustif : ne saute aucun personnage, aucun échange significatif
+- Chaque information ne doit apparaître qu'une seule fois — pas de répétition ni de reformulation du même fait
+- Progresse chronologiquement sans revenir sur ce qui a déjà été dit
 
 Scène :
 ---
