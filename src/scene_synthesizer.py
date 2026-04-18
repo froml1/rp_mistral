@@ -42,11 +42,10 @@ Alias de personnages : {aliases}
 Analyse cette scène de roleplay et rédige un compte-rendu détaillé en prose structurée. Couvre impérativement :
 
 1. CONTEXTE : lieu, moment, situation initiale
-2. PERSONNAGES : pour chacun — ce qu'il fait physiquement, ce qu'il dit (cite les répliques importantes), son état émotionnel, ses intentions apparentes
-3. CONVERSATIONS : sujets abordés dans les échanges verbaux — de quoi parle-t-on, quelles informations sont partagées, quelles questions sont posées, quels désaccords ou accords émergent
-4. DYNAMIQUE : interactions entre personnages, tensions, alliances, conflits
-5. ÉVÉNEMENTS CLÉS : actions importantes, révélations, retournements
-6. ÉVOLUTION : comment la situation change du début à la fin
+2. PERSONNAGES : pour chacun — ce qu'il fait physiquement, ce qu'il dit et les sujets qu'il aborde (cite les répliques importantes), son état émotionnel, ses intentions apparentes
+3. DYNAMIQUE : interactions entre personnages, tensions, alliances, conflits
+4. ÉVÉNEMENTS CLÉS : actions importantes, révélations, retournements
+5. ÉVOLUTION : comment la situation change du début à la fin
 
 Règles :
 - Sois exhaustif : ne saute aucun personnage, aucun échange significatif
