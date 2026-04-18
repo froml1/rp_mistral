@@ -22,9 +22,11 @@ _NARRATIVE_WORD = re.compile(r'[a-zA-ZÀ-ÿ]{3,}')
 
 
 def is_preflight_rp(content: str) -> bool:
-    """Présence d'au moins une étoile hors parenthèses → RP garanti."""
+    """Étoile hors parenthèses + au moins 4 mots → ouverture de bloc RP garantie."""
     s = content.strip()
-    return '*' in s and not _PARENS.search(s)
+    if '*' not in s or _PARENS.search(s):
+        return False
+    return len(s.split()) > 3
 
 
 def is_preflight_hrp(content: str) -> bool:
