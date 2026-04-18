@@ -31,8 +31,7 @@ def repondre(question: str, historique: list):
     except Exception as e:
         return historique, f"Erreur : {e}", ""
 
-    historique.append({"role": "user", "content": question})
-    historique.append({"role": "assistant", "content": reponse})
+    historique.append((question, reponse))
 
     lignes_sources = []
     for s in sources:
@@ -54,7 +53,7 @@ with gr.Blocks(title="IA Roleplay Discord", theme=gr.themes.Soft()) as app:
 
     with gr.Row():
         with gr.Column(scale=3):
-            chatbot = gr.Chatbot(label="Conversation", height=500, type="messages")
+            chatbot = gr.Chatbot(label="Conversation", height=500)
             with gr.Row():
                 question_input = gr.Textbox(
                     placeholder="Ex : Qu'est-ce qu'Antoine cherche à faire ? Quel est le lien entre Garrance et Gaulthier ?",
