@@ -4,7 +4,11 @@ RP/HRP separator — pre-processing pass before indexing.
 Reads raw Discord exports from data/exports/
 Writes filtered exports (RP only) to data/exports_filtered/
 
-Uses Mistral via analyzer.py for all classification decisions.
+Algorithme bloc :
+  - Un bloc RP démarre obligatoirement par un message contenant '*'
+  - Le bloc se termine sur un gap > 1h ou un délimiteur de scène (---, ___, ***)
+  - Dans un bloc : tout message non-preflight-HRP est conservé
+  - Hors bloc : tout message sans '*' est ignoré
 
 Usage:
   python src/purger.py [data/exports/]
@@ -12,14 +16,15 @@ Usage:
 
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
-from analyzer import classify_messages_batched, is_preflight_hrp, is_preflight_rp, _can_inherit_rp, BATCH_SIZE, _parse_ts
-from datetime import datetime
+from analyzer import is_preflight_hrp, is_preflight_rp, _parse_ts, _SCENE_BREAK
 from preprocessing import load_messages
 
 
-OUTPUT_DIR = Path("data/exports_filtered")
+OUTPUT_DIR      = Path("data/exports_filtered")
+_BLOCK_END_SECS = 3600  # gap > 1h → fin de bloc RP
 
 
 def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
@@ -28,87 +33,58 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
         out_path.write_text('{"messages": []}', encoding="utf-8")
         return 0
 
-    # Tri chronologique
     raw_messages.sort(key=lambda m: _parse_ts(m.get("timestamp", "")) or datetime.min)
     total = len(raw_messages)
 
-    # ── Phase 1 : preflight ───────────────────────────────────────────────────
-    candidates = [m for m in raw_messages if not is_preflight_hrp(m.get("content", ""))]
-    if verbose:
-        dropped = total - len(candidates)
-        print(f"  {filepath.name}: {total} msgs — {dropped} preflight, {len(candidates)} → Mistral")
-
-    # ── Phase 2+3 : seed search + chain roll ──────────────────────────────────
-    last_rp: dict | None = None   # dernière graine confirmée RP
-    pending:  list[dict] = []     # messages en attente de classification LLM
-    kept = 0
-    first = True
+    block_active = False
+    last_ts      = None
+    kept         = 0
+    first        = True
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write('{"messages": [')
 
-        def write_msg(msg: dict) -> None:
-            nonlocal first, kept
+        for i, msg in enumerate(raw_messages):
+            content = msg.get("content", "").strip()
+            ts      = _parse_ts(msg.get("timestamp", ""))
+
+            # ── fin de bloc : gap > 1h ────────────────────────────────────
+            if block_active and last_ts and ts:
+                if (ts - last_ts).total_seconds() > _BLOCK_END_SECS:
+                    block_active = False
+
+            if ts:
+                last_ts = ts
+
+            # ── fin de bloc : délimiteur de scène ─────────────────────────
+            if _SCENE_BREAK.match(content):
+                block_active = False
+                continue
+
+            # ── preflight HRP : toujours éliminé (parens, smileys…) ───────
+            if is_preflight_hrp(content):
+                continue
+
+            # ── hors bloc : seule une '*' peut démarrer ───────────────────
+            if not block_active:
+                if is_preflight_rp(content):
+                    block_active = True
+                else:
+                    continue
+
+            # ── dans le bloc : conservation ───────────────────────────────
             f.write(("" if first else ",") + "\n  ")
             json.dump(msg, f, ensure_ascii=False)
             first = False
             kept += 1
 
-        processed = 0
+            if verbose and (i + 1) % 10 == 0:
+                pct    = (i + 1) * 100 // total
+                status = "bloc" if block_active else "hors-bloc"
+                print(f"  {filepath.name}: {i+1}/{total} ({pct}%) — {kept} RP  [{status}]", end="\r")
 
-        def _progress() -> None:
-            pct = processed * 100 // total if total else 0
-            auto = kept - _progress.llm_kept
-            print(f"  {filepath.name}: {processed}/{total} ({pct}%) "
-                  f"— {kept} RP [{auto} auto, {_progress.llm_kept} LLM]", end="\r")
-        _progress.llm_kept = 0
-
-        def flush_pending() -> None:
-            nonlocal last_rp
-            if not pending:
-                return
-            _, _, results = next(iter(
-                classify_messages_batched(pending, batch_size=len(pending), context_overlap=0)
-            ))
-            for msg, clf in zip(pending, results):
-                if clf["is_rp"]:
-                    write_msg(msg)
-                    last_rp = msg
-                    _progress.llm_kept += 1
-                elif last_rp is not None:
-                    last_rp = None         # chaîne rompue → retour en seed search
-            pending.clear()
-            f.flush()
-            if verbose:
-                _progress()
-
-        for msg in candidates:
-            processed += 1
-            content = msg.get("content", "")
-
-            # Étoile → RP garanti, peut servir de graine
-            if is_preflight_rp(content):
-                if pending:
-                    flush_pending()
-                write_msg(msg)
-                last_rp = msg
-
-            # Héritage direct si graine active et pas de pending
-            elif last_rp is not None and not pending and _can_inherit_rp(msg, last_rp):
-                write_msg(msg)
-                last_rp = msg
-
-            # Incertain → batch Mistral
-            else:
-                pending.append(msg)
-                if len(pending) >= BATCH_SIZE:
-                    flush_pending()
-
-            if verbose and processed % 10 == 0:
-                _progress()
-
-        flush_pending()
         f.write("\n]}")
+        f.flush()
 
     if verbose:
         print(f"  {filepath.name}: {total} → {kept} RP, {total - kept} HRP      ")
@@ -135,7 +111,6 @@ def purge_all(exports_dir: str = "data/exports"):
         purge_export(filepath, out_path)
 
     print(f"Done. Filtered exports in {OUTPUT_DIR}/")
-    print(f"→ Run indexer on filtered exports:")
     print(f"  python src/indexer.py {OUTPUT_DIR}/")
 
 
