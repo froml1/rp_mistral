@@ -52,8 +52,10 @@ class LoreGraph:
         self._from_index: dict[str, list[dict]] = defaultdict(list)
         self._to_index: dict[str, list[dict]] = defaultdict(list)
         for edge in self._edges:
-            self._from_index[edge["from"]].append(edge)
-            self._to_index[edge["to"]].append(edge)
+            if not isinstance(edge, dict):
+                continue
+            self._from_index[str(edge.get("from") or "")].append(edge)
+            self._to_index[str(edge.get("to") or "")].append(edge)
 
     # ── node accessors ──────────────────────────────────────────────────────
 
