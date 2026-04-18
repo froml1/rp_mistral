@@ -79,6 +79,7 @@ def synthesize_scene(
         scene_text=compress_scene_text(scene_text),
     )
 
+    print(f"    [synthesizer] prompt {len(prompt)} chars, envoi à Ollama...")
     try:
         resp = requests.post(
             OLLAMA_URL,
@@ -92,10 +93,12 @@ def synthesize_scene(
             timeout=300,
         )
         resp.raise_for_status()
-        raw = resp.json().get("response", "")
-        print(f"    [synthesizer] {len(raw)} chars")
+        resp_json = resp.json()
+        raw = resp_json.get("response", "")
+        print(f"    [synthesizer] réponse {len(raw)} chars | done={resp_json.get('done')} | done_reason={resp_json.get('done_reason')}")
+        print(f"    [synthesizer] raw[:300]: {repr(raw[:300])}")
     except Exception as e:
-        print(f"  [synthesizer] error: {e}", file=sys.stderr)
+        print(f"  [synthesizer] ERREUR: {type(e).__name__}: {e}", file=sys.stderr)
         return _empty()
 
     return _parse_text_response(raw)
