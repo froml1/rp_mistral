@@ -23,6 +23,7 @@ OUTPUT_DIR = Path("data/exports_filtered")
 
 def purge_export(filepath: Path, verbose: bool = True) -> dict:
     raw_messages = load_messages(filepath)
+    print(len(raw_messages))
     classifications = classify_messages(raw_messages)
 
     rp_messages = [
@@ -42,10 +43,16 @@ def purge_all(exports_dir: str = "data/exports"):
     input_path = Path(exports_dir)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    json_files = list(input_path.glob("**/*.json")) + list(input_path.glob("**/*.csv"))
-    if not json_files:
+    if input_path.is_file():
+        files = [input_path]
+    else:
+        files = list(input_path.glob("**/*.json")) + list(input_path.glob("**/*.csv"))
+
+    if not files:
         print(f"No export files (.json / .csv) found in {exports_dir}")
         return
+
+    json_files = files
 
     print(f"Purging {len(json_files)} file(s) → {OUTPUT_DIR}/")
     for filepath in json_files:
