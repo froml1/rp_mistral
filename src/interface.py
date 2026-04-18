@@ -31,7 +31,8 @@ def repondre(question: str, historique: list):
     except Exception as e:
         return historique, f"Erreur : {e}", ""
 
-    historique.append((question, reponse))
+    historique.append({"role": "user", "content": question})
+    historique.append({"role": "assistant", "content": reponse})
 
     lignes_sources = []
     for s in sources:
