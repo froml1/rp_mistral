@@ -16,6 +16,7 @@ Usage:
 
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -121,9 +122,18 @@ def purge_all(exports_dir: str = "data/exports"):
         return
 
     print(f"Purging {len(files)} file(s) → {OUTPUT_DIR}/")
-    for filepath in files:
-        out_path = OUTPUT_DIR / (filepath.stem + ".json")
-        purge_export(filepath, out_path)
+    with ThreadPoolExecutor() as pool:
+        futures = {
+            pool.submit(purge_export, fp, OUTPUT_DIR / (fp.stem + ".json"), False): fp
+            for fp in files
+        }
+        for fut in as_completed(futures):
+            fp = futures[fut]
+            try:
+                kept = fut.result()
+                print(f"  {fp.name}: {kept} RP gardés")
+            except Exception as exc:
+                print(f"  {fp.name}: ERREUR — {exc}")
 
     print(f"Done. Filtered exports in {OUTPUT_DIR}/")
     print(f"  python src/indexer.py {OUTPUT_DIR}/")

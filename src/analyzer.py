@@ -288,6 +288,7 @@ def analyze_batch(
                     "type":      s.get("type", "narration"),
                 }
                 for s in (r.get("speaker_segments") or [])
+                if isinstance(s, dict)
             ],
             "tags": [t for t in (r.get("tags") or []) if t in MSG_TAG_VOCAB],
         })

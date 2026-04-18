@@ -4,6 +4,7 @@ Usage: python src/indexer.py data/exports/
 """
 
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import chromadb
