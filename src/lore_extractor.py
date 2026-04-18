@@ -146,6 +146,7 @@ def _call_mistral(text: str) -> dict:
             json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False},
             timeout=120,
         )
+        print(resp.json())
         resp.raise_for_status()
         raw = resp.json().get("response", "{}")
         return json.loads(raw)

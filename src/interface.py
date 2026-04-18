@@ -135,7 +135,12 @@ def ajouter_au_lore(affirmation: str, historique: list):
         from lore_extractor import OLLAMA_URL, LLM_MODEL
         resp = requests.post(
             OLLAMA_URL,
-            json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False},
+            json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False, "options": {
+            "temperature": 0,
+            "top_k": 1,
+            "num_predict": 250,
+            "num_ctx": 4096
+        }},
             timeout=60,
         )
         resp.raise_for_status()

@@ -58,7 +58,12 @@ def tag_scene(scene_text: str) -> list[str]:
     try:
         resp = requests.post(
             OLLAMA_URL,
-            json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False},
+            json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False, "options": {
+            "temperature": 0,
+            "top_k": 1,
+            "num_predict": 250,
+            "num_ctx": 4096
+        }},
             timeout=60,
         )
         resp.raise_for_status()

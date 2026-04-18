@@ -98,7 +98,10 @@ def process_export(
     analyses = analyze_messages(raw_messages, alias_map=alias_map)
 
     results = []
+    count = 0
     for msg, analysis in zip(raw_messages, analyses):
+        print(f"Analyze {count}/{len(analyses)}")
+        count+=1
         author_field = msg.get("author", {})
         author = (
             author_field.get("name") if isinstance(author_field, dict) else str(author_field)
@@ -107,11 +110,8 @@ def process_export(
         timestamp = msg.get("timestamp", "")
         scene_id  = msg.get("_scene")
 
+        print(f"content {raw_content}")
         if not raw_content:
-            continue
-
-        # Skip pure HRP messages (not OOC — OOC stays for context tracking)
-        if not analysis["is_rp"] and not analysis["is_ooc"]:
             continue
 
         clean_content = _clean_discord(raw_content)

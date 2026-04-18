@@ -65,9 +65,10 @@ def index_exports(exports_dir: str, extract_lore: bool = False, tag_scenes: bool
     for f_idx, filepath in enumerate(json_files, 1):
         print(f"[{f_idx}/{len(json_files)}] {filepath.name}")
         messages = process_export(filepath, config, lore=lore)
-        scenes   = group_into_scenes(messages)
-        n_scenes = len(scenes)
 
+        scenes = group_into_scenes(messages)
+        n_scenes = len(scenes)
+        print(f"Scenes {n_scenes}")
         for s_idx, scene in enumerate(scenes, 1):
             print(f"  scène {s_idx}/{n_scenes}", end="\r")
             stags = tag_scene(scene_text_preview(scene)) if tag_scenes else []
@@ -78,6 +79,7 @@ def index_exports(exports_dir: str, extract_lore: bool = False, tag_scenes: bool
             total_scenes += 1
             if extract_lore:
                 source = f"{filepath.stem}:{metadata.get('start', '')}"
+                print(source)
                 extract_and_merge(text, source, verbose=True)
 
         print(f"  {n_scenes} scènes — {len(messages)} messages      ")

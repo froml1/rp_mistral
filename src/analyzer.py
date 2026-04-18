@@ -7,13 +7,13 @@ speaker segmentation, and structural tags.
 """
 
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import os, time
 import re
 import sys
 from datetime import datetime
 
 import requests
-
-
 OLLAMA_URL   = "http://localhost:11434/api/generate"
 _SCENE_BREAK = re.compile(r'^[\-_*=~]{3,}\s*$')
 _PARENS      = re.compile(r'[()]')
@@ -121,7 +121,7 @@ def extend_rp_chain(messages: list[dict], statuses: list[str]) -> list[str]:
 
 
 LLM_MODEL = "mistral"
-BATCH_SIZE = 10
+BATCH_SIZE = 12
 
 _OPENER_SYSTEM = (
     "Tu es un classificateur de messages pour jeu de rôle narratif sur Discord. "
@@ -161,7 +161,12 @@ def classify_opener(content: str, prev_context: list[str] | None = None) -> tupl
     try:
         resp = requests.post(
             OLLAMA_URL,
-            json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False},
+            json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False, "options": {
+            "temperature": 0,
+            "top_k": 1,
+            "num_predict": 250,
+            "num_ctx": 4096
+        }},
             timeout=60,
         )
         resp.raise_for_status()
@@ -190,28 +195,26 @@ _SYSTEM = (
 )
 
 _PROMPT = """\
-Alias connus : {aliases}
+Alias : {aliases}
 
-Conventions :
-- Les actions sont entre *astérisques* ; le sujet grammatical du premier bloc = personnage actif
-- Les dialogues directs sont précédés de — ou entre guillemets " "
-- Un tiret « - » après * . ! ? » " = changement de locuteur dans le même message
-- Les commentaires méta sont entre ((...)) ou [OOC...]
-- Résoudre les alias vers leur nom canonique
+Classifie chaque message Discord.
 
-Pour chaque message, retourne :
-- is_rp : true si roleplay narratif (actions, dialogues de scène, descriptions), false si hors-rp (bavardage informel, liens, emojis excessifs)
-- is_ooc : true si le message entier est un commentaire méta
-- characters : liste des noms canoniques des personnages actifs (sujets d'actions ou locuteurs directs)
-- referenced : noms canoniques des personnages évoqués/absents
-- speaker_segments : découpe en segments [{{"text":"...","character":"Nom ou null","type":"action|dialogue|narration"}}]
-- tags : 0 à 2 tags parmi : {vocab}
+Retourne pour chaque message :
+- characters : personnages actifs
+- referenced : personnages mentionnés
+- speaker_segments : découpe simple texte → action / dialogue / narration
+- tags : max 2 parmi {vocab}
 
-Retourne uniquement ce JSON (les tableaux peuvent être vides) :
-{{"messages":[{{"index":0,"is_rp":true,"is_ooc":false,"characters":[],"referenced":[],"speaker_segments":[{{"text":"","character":null,"type":"narration"}}],"tags":[]}}]}}
+Règles :
+- alias → nom canonique
+- speaker_segments = découpage léger (pas fin)
+
+Retour JSON :
+{{"messages":[{{"index":0,"characters":[],"referenced":[],"speaker_segments":[{{"text":"","character":null,"type":"narration"}}],"tags":[]}}]}}
 
 Messages :
-{messages}"""
+{messages}
+"""
 
 
 def _get_author(msg: dict) -> str:
@@ -259,7 +262,12 @@ def analyze_batch(
     try:
         resp = requests.post(
             OLLAMA_URL,
-            json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False},
+            json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False, "options": {
+            "temperature": 0,
+            "top_k": 1,
+            "num_predict": 250,
+            "num_ctx": 4096
+        }},
             timeout=120,
         )
         resp.raise_for_status()
@@ -381,7 +389,12 @@ def classify_messages_batched(
         try:
             resp = requests.post(
                 OLLAMA_URL,
-                json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False},
+                json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False, "options": {
+            "temperature": 0,
+            "top_k": 1,
+            "num_predict": 250,
+            "num_ctx": 4096
+        }},
                 timeout=120,
             )
             resp.raise_for_status()
@@ -418,6 +431,25 @@ def classify_messages(
             results[start + j] = r
     return [r if r is not None else {"is_rp": False, "is_ooc": False} for r in results]
 
+def worker_analyze(messages, start, ctx_start, batch, alias_map):
+    """
+    Process one batch in a thread.
+    Returns list of tuples: (global_index, result)
+    """
+    print(f"Analyzing... {start}-{start + BATCH_SIZE}/{len(messages)}")
+    start_time = time.perf_counter()
+    batch_results = analyze_batch(batch, alias_map=alias_map)
+    end_time = time.perf_counter()
+    execution_time = end_time - start_time
+    offset = start - ctx_start
+    out = []
+    print(f"End Analyzing... {start}-{start + BATCH_SIZE}/{len(messages)}. Programme exécuté en : {execution_time: .5f} secondes")
+    for j, result in enumerate(batch_results[offset:], start=start):
+        if j < len(messages):
+            out.append((j, result))
+
+    return out
+
 
 def analyze_messages(
     messages: list[dict],
@@ -435,17 +467,26 @@ def analyze_messages(
         return []
 
     results: list[dict | None] = [None] * len(messages)
-
+    count = 1
+    batches = []
+    jobs = []
     for start in range(0, len(messages), batch_size):
+        count += 1
         end = min(start + batch_size, len(messages))
         ctx_start = max(0, start - context_overlap)
         batch = messages[ctx_start:end]
+        batches.append(batch)
+        jobs.append((messages, start, ctx_start, batch, alias_map))
 
-        batch_results = analyze_batch(batch, alias_map=alias_map)
-
-        offset = start - ctx_start
-        for j, result in enumerate(batch_results[offset:], start=start):
-            if j < len(messages):
-                results[j] = result
+    max_workers = min(1, os.cpu_count() or 1)
+    futures = []
+    all_outputs  = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(worker_analyze, *job) for job in jobs]
+        all_outputs = [future.result() for future in futures]
+    
+    for output in all_outputs:
+        for idx, value in output:
+            results[idx] = value
 
     return [r if r is not None else _default() for r in results]
