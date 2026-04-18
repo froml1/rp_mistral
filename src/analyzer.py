@@ -21,12 +21,21 @@ _RP_GAP_SECS = 300
 _NARRATIVE_WORD = re.compile(r'[a-zA-ZÀ-ÿ]{3,}')
 
 
+_STAR_CONTENT = re.compile(r'\*([^*]+)\*')
+
 def is_preflight_rp(content: str) -> bool:
-    """Étoile hors parenthèses + au moins 4 mots → ouverture de bloc RP garantie."""
+    """
+    Candidat à l'ouverture de bloc RP :
+    - pas de parenthèses
+    - au moins une paire *...* dont le contenu interne dépasse 3 mots
+    """
     s = content.strip()
-    if '*' not in s or _PARENS.search(s):
+    if _PARENS.search(s):
         return False
-    return len(s.split()) > 3
+    matches = _STAR_CONTENT.findall(s)
+    if not matches:
+        return False
+    return any(len(m.split()) > 3 for m in matches)
 
 
 def is_preflight_hrp(content: str) -> bool:
