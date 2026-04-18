@@ -2,8 +2,33 @@
   "messages": [
     {
       "author": {"name": "morgane"},
-      "content": "*Garrance pousse la porte de la taverne, laissant entrer un courant d'air froid.* Elle n'attendait personne.",
+      "content": "hé t'es dispo pour jouer ce soir ? 😄",
+      "timestamp": "2024-03-10T18:45:00+00:00"
+    },
+    {
+      "author": {"name": "théo"},
+      "content": "oui go ! j'ai une idée pour la suite d'Antoine",
+      "timestamp": "2024-03-10T18:46:00+00:00"
+    },
+    {
+      "author": {"name": "morgane"},
+      "content": "https://www.pinterest.fr/pin/inspiration-taverne-medievale/",
+      "timestamp": "2024-03-10T18:47:00+00:00"
+    },
+    {
+      "author": {"name": "théo"},
+      "content": "ooh nice référence 👍",
+      "timestamp": "2024-03-10T18:48:00+00:00"
+    },
+    {
+      "author": {"name": "morgane"},
+      "content": "---",
       "timestamp": "2024-03-10T19:00:00+00:00"
+    },
+    {
+      "author": {"name": "morgane"},
+      "content": "*Garrance pousse la porte de la taverne, laissant entrer un courant d'air froid.* Elle n'attendait personne.",
+      "timestamp": "2024-03-10T19:00:30+00:00"
     },
     {
       "author": {"name": "théo"},
@@ -49,6 +74,36 @@
       "author": {"name": "théo"},
       "content": "*Il posa les yeux sur elle pour la première fois.* Un sourire sans chaleur. — De la part de qui ?",
       "timestamp": "2024-03-10T19:18:00+00:00"
+    },
+    {
+      "author": {"name": "morgane"},
+      "content": "— Des gens peu recommandables. *Elle sortit un pli de sous son manteau.* Ils m'ont chargée de te dire \"disparais avant l'aube\".",
+      "timestamp": "2024-03-10T19:20:00+00:00"
+    },
+    {
+      "author": {"name": "théo"},
+      "content": "*Il prit le pli sans l'ouvrir.* — Et si je refuse ?",
+      "timestamp": "2024-03-10T19:22:00+00:00"
+    },
+    {
+      "author": {"name": "morgane"},
+      "content": "___",
+      "timestamp": "2024-03-10T19:25:00+00:00"
+    },
+    {
+      "author": {"name": "morgane"},
+      "content": "waaaah bonne scène 😍😍",
+      "timestamp": "2024-03-10T19:25:30+00:00"
+    },
+    {
+      "author": {"name": "théo"},
+      "content": "ouais j'adore où ça part ! on continue demain ?",
+      "timestamp": "2024-03-10T19:26:00+00:00"
+    },
+    {
+      "author": {"name": "morgane"},
+      "content": "oui ! lol j'avais pas prévu le coup du pli 😂",
+      "timestamp": "2024-03-10T19:26:30+00:00"
     }
   ]
 }
