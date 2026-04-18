@@ -75,8 +75,11 @@ def load_export(path: Path) -> list[dict]:
         with open(path, encoding="utf-8", newline="") as f:
             sample = f.read(4096)
             f.seek(0)
-            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-            for row in csv.DictReader(f, dialect=dialect):
+            try:
+                delimiter = csv.Sniffer().sniff(sample, delimiters=",;\t|").delimiter
+            except csv.Error:
+                delimiter = ","
+            for row in csv.DictReader(f, delimiter=delimiter):
                 author = (row.get("author") or row.get("Author") or "").strip()
                 content = (row.get("content") or row.get("Content") or "").strip()
                 timestamp = (row.get("timestamp") or row.get("Timestamp") or "").strip()

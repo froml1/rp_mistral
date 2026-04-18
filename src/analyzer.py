@@ -9,11 +9,62 @@ speaker segmentation, and structural tags.
 import json
 import re
 import sys
+from datetime import datetime
 
 import requests
 
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_URL   = "http://localhost:11434/api/generate"
+_SCENE_BREAK = re.compile(r'^[\-_*=~]{3,}\s*$')
+_PARENS      = re.compile(r'[()]')
+_RP_GAP_SECS = 300
+
+
+def _parse_ts(ts: str) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def pre_classify_messages(messages: list[dict]) -> list[str]:
+    """
+    Fast heuristic pass — no LLM.
+    Returns per-message: 'rp', 'non_rp', or 'uncertain'.
+
+    Auto-'rp' when ALL conditions hold:
+      - previous confirmed 'rp'
+      - timestamp gap ≤ 5 min
+      - neither message is a scene-break line (---, ___, ***)
+      - content has no parentheses (OOC marker)
+    Scene-break lines → 'non_rp'.
+    Everything else → 'uncertain'.
+    """
+    statuses: list[str] = []
+    for i, msg in enumerate(messages):
+        content = msg.get("content", "").strip()
+
+        if _SCENE_BREAK.match(content):
+            statuses.append("non_rp")
+            continue
+
+        if i > 0 and statuses[i - 1] == "rp":
+            prev = messages[i - 1]
+            if not _SCENE_BREAK.match(prev.get("content", "").strip()):
+                ts_cur  = _parse_ts(msg.get("timestamp", ""))
+                ts_prev = _parse_ts(prev.get("timestamp", ""))
+                if ts_cur and ts_prev:
+                    gap = abs((ts_cur - ts_prev).total_seconds())
+                    if gap <= _RP_GAP_SECS and not _PARENS.search(content):
+                        statuses.append("rp")
+                        continue
+
+        statuses.append("uncertain")
+    return statuses
+
+
 LLM_MODEL = "mistral"
 BATCH_SIZE = 10
 
