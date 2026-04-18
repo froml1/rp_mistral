@@ -4,12 +4,12 @@ One LLM call per scene → summary, characters, location, themes, lore hints.
 Replaces analyzer.py + tagger.py for the indexing pipeline.
 """
 
-import json
+import re
 import sys
 
 import requests
 
-from analyzer import compress_scene_text, preprocess_for_llm
+from analyzer import compress_scene_text
 
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
@@ -31,22 +31,19 @@ SCENE_TAG_VOCAB: list[str] = [
 
 _SYSTEM = (
     "Tu es un analyste de scènes de roleplay narratif écrit. "
-    "Tu retournes UNIQUEMENT du JSON valide, sans texte supplémentaire. "
     "Tu n'inventes rien : tu te bases uniquement sur ce qui est explicite ou fortement implicite dans la scène."
 )
 
 _PROMPT = """\
 Alias connus : {aliases}
 
-Analyse cette scène de roleplay et retourne :
-- summary    : résumé narratif dense en 3-6 phrases (prose, ce qui se passe, ce qui se dit, ce qui se fait)
-- characters : personnages présents et actifs (noms canoniques)
-- referenced : personnages mentionnés mais non présents
-- location   : lieu de la scène (null si non précisé)
-- themes     : 2-4 tags parmi {vocab}
+Analyse cette scène de roleplay. Réponds en respectant EXACTEMENT ce format (une valeur par ligne) :
 
-Retour JSON strict :
-{{"summary":"","characters":[],"referenced":[],"location":null,"themes":[]}}
+SUMMARY: <résumé narratif exhaustif — tout ce qui se passe, se dit, se fait. Autant de phrases que nécessaire.>
+CHARACTERS: <noms canoniques séparés par des virgules, ou vide>
+REFERENCED: <personnages mentionnés mais absents, séparés par des virgules, ou vide>
+LOCATION: <lieu de la scène, ou vide>
+THEMES: <2-4 tags parmi {vocab}, séparés par des virgules>
 
 Scène :
 ---
@@ -88,25 +85,38 @@ def synthesize_scene(
             json={
                 "model": LLM_MODEL,
                 "prompt": prompt,
-                "format": "json",
                 "stream": False,
                 "keep_alive": -1,
-                "options": {"temperature": 0, "top_k": 1, "num_predict": 1024, "num_ctx": 4096},
+                "options": {"temperature": 0, "top_k": 1, "num_predict": -1, "num_ctx": 4096},
             },
-            timeout=180,
+            timeout=300,
         )
         resp.raise_for_status()
-        raw = resp.json().get("response", "{}")
-        print(f"    [synthesizer] raw response ({len(raw)} chars): {raw[:200]}")
-        data = json.loads(raw)
+        raw = resp.json().get("response", "")
+        print(f"    [synthesizer] {len(raw)} chars")
     except Exception as e:
         print(f"  [synthesizer] error: {e}", file=sys.stderr)
         return _empty()
 
+    return _parse_text_response(raw)
+
+
+def _parse_text_response(raw: str) -> dict:
+    def _field(key: str) -> str:
+        m = re.search(rf'^{key}:\s*(.+?)(?=\n[A-Z]+:|$)', raw, re.MULTILINE | re.DOTALL)
+        return m.group(1).strip() if m else ""
+
+    def _list(key: str) -> list[str]:
+        val = _field(key)
+        return [v.strip() for v in val.split(",") if v.strip()] if val else []
+
+    themes = [t for t in _list("THEMES") if t in SCENE_TAG_VOCAB]
+    location = _field("LOCATION") or None
+
     return {
-        "summary":    str(data.get("summary") or ""),
-        "characters": [str(c) for c in (data.get("characters") or [])],
-        "referenced": [str(c) for c in (data.get("referenced") or [])],
-        "location":   data.get("location"),
-        "themes":     [t for t in (data.get("themes") or []) if t in SCENE_TAG_VOCAB],
+        "summary":    _field("SUMMARY"),
+        "characters": _list("CHARACTERS"),
+        "referenced": _list("REFERENCED"),
+        "location":   location,
+        "themes":     themes,
     }
