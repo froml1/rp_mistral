@@ -144,6 +144,31 @@ def process_export(
     return results
 
 
+def group_raw_into_scenes(messages: list[dict]) -> list[list[dict]]:
+    """Group raw message dicts by _scene tag injected by the purger."""
+    scenes: dict[int, list[dict]] = {}
+    for msg in messages:
+        sid = msg.get("_scene", 0)
+        if not isinstance(sid, int):
+            sid = 0
+        scenes.setdefault(sid, []).append(msg)
+    return [scenes[k] for k in sorted(scenes)] if scenes else []
+
+
+def raw_scene_to_text(scene: list[dict], alias_map: dict | None = None) -> str:
+    """Format raw message dicts into plain text for LLM input."""
+    alias_map = alias_map or {}
+    lines = []
+    for msg in scene:
+        author = msg.get("author", {})
+        name = author.get("name", "?") if isinstance(author, dict) else str(author)
+        name = alias_map.get(name, name)
+        content = msg.get("content", "").strip()
+        if content:
+            lines.append(f"{name}: {content}")
+    return "\n".join(lines)
+
+
 def group_into_scenes(messages: list[MessageRP]) -> list[list[MessageRP]]:
     if not messages:
         return []

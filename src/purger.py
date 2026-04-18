@@ -24,8 +24,9 @@ from analyzer import is_preflight_hrp, is_preflight_rp, classify_opener, _parse_
 from preprocessing import load_messages
 
 
-OUTPUT_DIR      = Path("data/exports_filtered")
-_BLOCK_END_SECS = 3600  # gap > 1h → fin de bloc RP
+OUTPUT_DIR        = Path("data/exports_filtered")
+_BLOCK_END_SECS   = 3600  # gap > 1h  → fin de bloc RP (contexte perdu)
+_SCENE_BREAK_SECS = 900   # gap > 15min → nouvelle scène dans le même bloc
 
 
 def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
@@ -51,11 +52,15 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
             content = msg.get("content", "").strip()
             ts      = _parse_ts(msg.get("timestamp", ""))
 
-            # ── fin de bloc : gap > 1h (contexte effacé — trop loin) ─────
+            # ── fin de bloc ou nouvelle scène selon le gap ───────────────
             if block_active and last_ts and ts:
-                if (ts - last_ts).total_seconds() > _BLOCK_END_SECS:
+                gap = (ts - last_ts).total_seconds()
+                if gap > _BLOCK_END_SECS:
                     block_active = False
                     prev_context = []
+                elif gap > _SCENE_BREAK_SECS:
+                    # Même session mais pause longue → forcer une nouvelle scène
+                    block_active = False
 
             if ts:
                 last_ts = ts
@@ -69,18 +74,16 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
             if is_preflight_hrp(content):
                 continue
 
-            # ── hors bloc : '*' + Mistral valide ouverture et continuité ─
+            # ── hors bloc : '*' + Mistral valide ouverture ────────────────
             if not block_active:
                 if is_preflight_rp(content):
-                    is_opener, is_new_scene = classify_opener(content, prev_context or None)
+                    is_opener, _ = classify_opener(content, prev_context or None)
                     if is_opener:
                         block_active = True
-                        if is_new_scene or scene_id == 0:
-                            scene_id += 1
-                            prev_context = []
+                        scene_id += 1
+                        prev_context = []
                         if verbose:
-                            tag = "nouvelle scène" if is_new_scene else "reprise scène"
-                            print(f"\n  ↳ scène {scene_id} [{tag}] : {content[:55]}")
+                            print(f"\n  ↳ scène {scene_id} : {content[:55]}")
                     else:
                         continue
                 else:

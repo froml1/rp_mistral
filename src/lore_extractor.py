@@ -264,7 +264,10 @@ def merge_into_lore(extracted: dict, source: str) -> int:
     for section in ("characters", "places", "events", "objects", "cultures", "intentions"):
         if lore.get(section) is None:
             lore[section] = {}
-        for name, data in (extracted.get(section) or {}).items():
+        raw = extracted.get(section) or {}
+        if not isinstance(raw, dict):
+            raw = {}
+        for name, data in raw.items():
             if not name:
                 continue
             data = data or {}
@@ -282,7 +285,10 @@ def merge_into_lore(extracted: dict, source: str) -> int:
     # Narrative axes — union-merge entity lists, allow state degradation
     if lore.get("narrative_axes") is None:
         lore["narrative_axes"] = {}
-    for axis_id, axis_data in (extracted.get("narrative_axes") or {}).items():
+    raw_axes = extracted.get("narrative_axes") or {}
+    if not isinstance(raw_axes, dict):
+        raw_axes = {}
+    for axis_id, axis_data in raw_axes.items():
         if not axis_id:
             continue
         axis_data = axis_data or {}
@@ -297,7 +303,10 @@ def merge_into_lore(extracted: dict, source: str) -> int:
     # Character knowledge
     if lore.get("character_knowledge") is None:
         lore["character_knowledge"] = {}
-    for char_name, profile in (extracted.get("character_knowledge") or {}).items():
+    raw_ck = extracted.get("character_knowledge") or {}
+    if not isinstance(raw_ck, dict):
+        raw_ck = {}
+    for char_name, profile in raw_ck.items():
         if not char_name or not profile:
             continue
         if char_name not in lore["character_knowledge"]:
