@@ -201,12 +201,9 @@ def classify_opener(content: str, prev_context: list[str] | None = None) -> tupl
     try:
         resp = requests.post(
             OLLAMA_URL,
-            json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False, "options": {
-            "temperature": 0,
-            "top_k": 1,
-            "num_predict": 250,
-            "num_ctx": 4096
-        }},
+            json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False,
+                  "keep_alive": -1,
+                  "options": {"temperature": 0, "top_k": 1, "num_predict": 64, "num_ctx": 2048}},
             timeout=60,
         )
         resp.raise_for_status()
@@ -342,12 +339,9 @@ def analyze_batch(
     try:
         resp = requests.post(
             OLLAMA_URL,
-            json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False, "options": {
-            "temperature": 0,
-            "top_k": 1,
-            "num_predict": 400,
-            "num_ctx": 4096
-        }},
+            json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False,
+                  "keep_alive": -1,
+                  "options": {"temperature": 0, "top_k": 1, "num_predict": 400, "num_ctx": 2048}},
             timeout=120,
         )
         resp.raise_for_status()
@@ -465,12 +459,9 @@ def classify_messages_batched(
         try:
             resp = requests.post(
                 OLLAMA_URL,
-                json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False, "options": {
-            "temperature": 0,
-            "top_k": 1,
-            "num_predict": 250,
-            "num_ctx": 4096
-        }},
+                json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False,
+                      "keep_alive": -1,
+                      "options": {"temperature": 0, "top_k": 1, "num_predict": 200, "num_ctx": 2048}},
                 timeout=120,
             )
             resp.raise_for_status()
@@ -507,23 +498,46 @@ def classify_messages(
             results[start + j] = r
     return [r if r is not None else {"is_rp": False, "is_ooc": False} for r in results]
 
+def _trivial_default(msg: dict) -> dict | None:
+    """Retourne _default() sans appel LLM si le message est trivialement non-narratif."""
+    content = msg.get("content", "").strip()
+    if not content or len(content) < 4:
+        return _default()
+    if is_preflight_hrp(content):
+        return _default()
+    return None
+
+
 def worker_analyze(messages, start, ctx_start, batch, alias_map):
-    """
-    Process one batch in a thread.
-    Returns list of tuples: (global_index, result)
-    """
+    """Process one batch. Messages trivialement HRP sont court-circuités."""
     print(f"Analyzing... {start}-{start + BATCH_SIZE}/{len(messages)}")
     start_time = time.perf_counter()
-    batch_results = analyze_batch(batch, alias_map=alias_map)
-    end_time = time.perf_counter()
-    execution_time = end_time - start_time
+
+    # Pré-filtre : séparer les messages triviaux des messages à envoyer au LLM
+    trivial: dict[int, dict] = {}
+    llm_batch: list[tuple[int, dict]] = []  # (index_in_batch, msg)
+    for idx, msg in enumerate(batch):
+        d = _trivial_default(msg)
+        if d is not None:
+            trivial[idx] = d
+        else:
+            llm_batch.append((idx, msg))
+
+    if llm_batch:
+        llm_results = analyze_batch([m for _, m in llm_batch], alias_map=alias_map)
+        llm_map = {llm_batch[i][0]: r for i, r in enumerate(llm_results)}
+    else:
+        llm_map = {}
+
+    batch_results = [trivial.get(i) or llm_map.get(i) or _default() for i in range(len(batch))]
+
+    execution_time = time.perf_counter() - start_time
     offset = start - ctx_start
     out = []
-    print(f"End Analyzing... {start}-{start + BATCH_SIZE}/{len(messages)}. Programme exécuté en : {execution_time: .5f} secondes")
+    print(f"End Analyzing... {start}-{start + BATCH_SIZE}/{len(messages)} ({execution_time:.2f}s, {len(llm_batch)}/{len(batch)} LLM)")
     for j, result in enumerate(batch_results[offset:], start=start):
         if j < len(messages):
             out.append((j, result))
-
     return out
 
 
