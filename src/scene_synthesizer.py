@@ -91,12 +91,14 @@ def synthesize_scene(
                 "format": "json",
                 "stream": False,
                 "keep_alive": -1,
-                "options": {"temperature": 0, "top_k": 1, "num_predict": 600, "num_ctx": 4096},
+                "options": {"temperature": 0, "top_k": 1, "num_predict": 1024, "num_ctx": 4096},
             },
             timeout=180,
         )
         resp.raise_for_status()
-        data = json.loads(resp.json().get("response", "{}"))
+        raw = resp.json().get("response", "{}")
+        print(f"    [synthesizer] raw response ({len(raw)} chars): {raw[:200]}")
+        data = json.loads(raw)
     except Exception as e:
         print(f"  [synthesizer] error: {e}", file=sys.stderr)
         return _empty()
