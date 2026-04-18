@@ -1,0 +1,54 @@
+{
+  "messages": [
+    {
+      "author": {"name": "morgane"},
+      "content": "*Garrance pousse la porte de la taverne, laissant entrer un courant d'air froid.* Elle n'attendait personne.",
+      "timestamp": "2024-03-10T19:00:00+00:00"
+    },
+    {
+      "author": {"name": "théo"},
+      "content": "*Antoine pensa à Gaulthier qui avait cette habitude facheuse de tenir sa cigarette dans le creux de sa paume.* - ton frère est incapable de ne pas se bruler en fumant.",
+      "timestamp": "2024-03-10T19:02:00+00:00"
+    },
+    {
+      "author": {"name": "morgane"},
+      "content": "*Garrance à la reflexion eut un rire, il était vrai que Go n'était pas habile en ce qui s'agissait de se faire mal.*",
+      "timestamp": "2024-03-10T19:04:00+00:00"
+    },
+    {
+      "author": {"name": "théo"},
+      "content": "((je sais pas si Antoine connaît déjà Garrance, on valide ?))",
+      "timestamp": "2024-03-10T19:05:00+00:00"
+    },
+    {
+      "author": {"name": "morgane"},
+      "content": "((non, première rencontre))",
+      "timestamp": "2024-03-10T19:06:00+00:00"
+    },
+    {
+      "author": {"name": "théo"},
+      "content": "*Antoine s'en allait dans la rue.* - \"Où vas-tu ?\" *le héla Gaulthier* - \"Nulle part.\"",
+      "timestamp": "2024-03-10T19:08:00+00:00"
+    },
+    {
+      "author": {"name": "morgane"},
+      "content": "*Garrance le rattrapa.* — Antoine, attends.",
+      "timestamp": "2024-03-10T19:10:00+00:00"
+    },
+    {
+      "author": {"name": "théo"},
+      "content": "*Antoine s'arrêta sans se retourner. Gaulthier, lui, disparaissait déjà au coin de la rue.*",
+      "timestamp": "2024-03-10T19:12:00+00:00"
+    },
+    {
+      "author": {"name": "morgane"},
+      "content": "Elle s'y résolue. *Garrance contourna Antoine pour lui faire face.* — J'ai un message pour toi.",
+      "timestamp": "2024-03-10T19:15:00+00:00"
+    },
+    {
+      "author": {"name": "théo"},
+      "content": "*Il posa les yeux sur elle pour la première fois.* Un sourire sans chaleur. — De la part de qui ?",
+      "timestamp": "2024-03-10T19:18:00+00:00"
+    }
+  ]
+}

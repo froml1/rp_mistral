@@ -1,0 +1,139 @@
+# World Knowledge Graph
+# ─────────────────────────────────────────────────────────────────────────────
+# confidence : "verified" | "llm" | "low"
+#
+# state (nodes and relations):
+#   "est"  — currently active / existing
+#   "fut"  — existed in the past, no longer active (history preserved)
+#   "sera" — projected / planned / anticipated future state
+#   Default is "est" when omitted.
+#
+# Relations are NEVER deleted on state change — they transition.
+# The dedup key for relations is (from, rel, to, state), so the same
+# relation can exist in multiple temporal states simultaneously.
+#
+# ─── Node types ───────────────────────────────────────────────────────────────
+# character, place, event, object, culture, intention, narrative_axis, rule
+#
+# ─── Relation vocabulary ──────────────────────────────────────────────────────
+#   character–character  : frère_de sœur_de parent_de enfant_de ami_de ennemi_de
+#                          rival_de allié_de amant_de maître_de élève_de membre_de
+#   character–place      : présent_à habite vient_de fuit_de se_dirige_vers
+#   character–event      : participe_à cause subit témoin_de
+#   character–object     : possède utilise cherche a_créé a_perdu
+#   character–culture    : appartient_à pratique rejette
+#   character–intention  : a_intention
+#   place–place          : contient adjacent_à fait_partie_de
+#   place–event          : lieu_de
+#   place–culture        : territoire_de influencé_par
+#   event–event          : précède cause suit
+#   event–object         : implique
+#   event–culture        : reflète transgresse
+#   event–temporality    : à_lieu_à
+#   object–place         : situé_à vient_de
+#   object–culture       : artefact_de
+#   intention–event      : vise a_déclenché
+#   culture–rule         : dicte
+#   narrative_axis–*     : inclut
+#   narrative_axis–axis  : croise
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── NODES ─────────────────────────────────────────────────────────────────────
+
+characters: {}
+# Antoine:
+#   author: théo
+#   aliases: [Toine]
+#   description: ""
+#   state: est          # est | fut (mort/disparu) | sera (attendu)
+#   confidence: verified
+
+places: {}
+# Tour_Noire:
+#   description: "lieu de pouvoir fréquenté par Azaël"
+#   state: est
+#   confidence: llm
+
+events: {}
+# Proces_Vincourt:
+#   label: "Procès Vincourt"
+#   description: "Antoine y témoigne, Azaël officie"
+#   timestamp: null
+#   state: fut          # événement passé
+#   confidence: llm
+
+objects: {}
+# Pli_mysterieux:
+#   description: "message apporté par Garrance à Antoine"
+#   state: est
+#   confidence: llm
+
+cultures: {}
+# Vran_shi:
+#   description: "peuple dont est issue la langue vran'shi"
+#   state: est
+#   confidence: llm
+
+intentions: {}
+# Antoine_disparaitre:
+#   character: Antoine
+#   description: "Antoine cherche à disparaître avant l'aube suite à une menace"
+#   status: en_cours    # en_cours | accomplie | abandonnée | échouée
+#   state: est
+#   confidence: llm
+
+narrative_axes: {}
+# Affaire_Vincourt:
+#   label: "Affaire Vincourt"
+#   description: >
+#     Procès réunissant Antoine comme témoin et Azaël comme juge.
+#   characters: [Antoine, Azaël]
+#   places: [Tribunal]
+#   events: [Proces_Vincourt]
+#   objects: []
+#   cultures: []
+#   intentions: []
+#   themes: [justice, pouvoir, témoignage]
+#   state: fut
+#   confidence: llm
+
+universe_rules: []
+# - "En vran'shi, 'trop de couteaux pour une seule table' désigne une situation de tension"
+
+# ── CHARACTER KNOWLEDGE ───────────────────────────────────────────────────────
+# Epistemic profile per character. Three states:
+#   sait       — established fact the character is aware of (may still be wrong from reader POV)
+#   ne_sait_pas — ignorance: the fact exists in the lore but the character is unaware
+#   croit      — belief: may be true or false; can be sourced from culture or universe rules
+#
+# Knowledge items can reference lore entities (via `entity` field) or be free text.
+# Beliefs can carry source_culture / source_rule to explain their origin.
+# Narrative tension arises when `croit` contradicts established lore facts.
+
+character_knowledge: {}
+# Antoine:
+#   sait:
+#     - description: "Une organisation veut le faire disparaître avant l'aube"
+#       entity: null
+#       established: "taverne_test:2024-03-10T19:15"
+#       confidence: llm
+#   ne_sait_pas:
+#     - description: "L'identité des commanditaires de la menace"
+#       entity: null
+#       confidence: llm
+#   croit:
+#     - description: "La méfiance envers les inconnus est de mise"
+#       entity: null
+#       source_culture: Vran_shi
+#       source_rule: null
+#       verified: false     # true = belief confirmed by lore facts; false = uncertain or wrong
+#       confidence: llm
+
+# ── EDGES ─────────────────────────────────────────────────────────────────────
+# Dedup key: (from, rel, to, state) — same relation can exist in multiple temporal states.
+
+relations: []
+# - {from: Antoine, from_type: character, rel: ami_de, to: Gaulthier, to_type: character,
+#    state: fut, source: "...", confidence: llm}
+# - {from: Antoine, from_type: character, rel: ami_de, to: Gaulthier, to_type: character,
+#    state: est, source: "...", confidence: low}

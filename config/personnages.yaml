@@ -1,0 +1,19 @@
+# Manual character config. Run bootstrap.py to generate a draft, then correct here.
+
+joueurs:
+  théo:
+    personnages: [Antoine, Gaulthier]
+  morgane:
+    personnages: [Garrance]
+
+# aliases: short names, nicknames, or alternate spellings mapped to canonical names
+# Key = form found in text, value = canonical character name
+aliases:
+  Go: Gaulthier
+
+pnj: []
+#  - le Roi
+#  - la Marchande
+
+arcs: {}
+#  taverne_test: "Arc 1 - La Taverne"
