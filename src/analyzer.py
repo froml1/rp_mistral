@@ -18,19 +18,22 @@ OLLAMA_URL   = "http://localhost:11434/api/generate"
 _SCENE_BREAK = re.compile(r'^[\-_*=~]{3,}\s*$')
 _PARENS      = re.compile(r'[()]')
 _RP_GAP_SECS = 300
-_OOC_FULL    = re.compile(r'^\s*(\(.*\)|\(\(.*\)\)|\[OOC[^\]]*\])\s*$', re.DOTALL | re.IGNORECASE)
 _NARRATIVE_WORD = re.compile(r'[a-zA-ZÀ-ÿ]{3,}')
 
 
-def _is_clearly_hrp(content: str) -> bool:
-    """True pour les messages manifestement HRP sans ambiguïté narrative."""
+def is_preflight_hrp(content: str) -> bool:
+    """
+    Preflight HRP — éliminé sans passer par Mistral.
+    Règles :
+      - vide ou séparateur de scène
+      - contient des parenthèses (marqueur OOC dans ce corpus)
+      - aucun mot de 3+ lettres (smileys, emojis, ponctuation seule)
+    """
     s = content.strip()
-    if not s:
+    if not s or _SCENE_BREAK.match(s):
         return True
-    # Entièrement entre parenthèses / balises OOC
-    if _OOC_FULL.match(s):
+    if _PARENS.search(s):
         return True
-    # Aucun mot de 3+ lettres : smileys, emojis, ponctuation seule
     if not _NARRATIVE_WORD.search(s):
         return True
     return False
@@ -70,7 +73,7 @@ def pre_classify_messages(messages: list[dict], seed_msg: dict | None = None) ->
 
     for msg in messages:
         content = msg.get("content", "").strip()
-        if _SCENE_BREAK.match(content) or _is_clearly_hrp(content):
+        if is_preflight_hrp(content):
             statuses.append("non_rp")
             prev_is_rp = False
         elif prev_is_rp and prev_msg is not None and _can_inherit_rp(msg, prev_msg):

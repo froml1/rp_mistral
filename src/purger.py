@@ -14,16 +14,12 @@ import json
 import sys
 from pathlib import Path
 
-from analyzer import (
-    classify_messages_batched, pre_classify_messages, extend_rp_chain,
-    BATCH_SIZE, _parse_ts,
-)
+from analyzer import classify_messages_batched, is_preflight_hrp, _can_inherit_rp, BATCH_SIZE, _parse_ts
 from datetime import datetime
 from preprocessing import load_messages
 
 
 OUTPUT_DIR = Path("data/exports_filtered")
-CHUNK_SIZE  = BATCH_SIZE * 3  # messages traités par itération
 
 
 def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
@@ -32,57 +28,65 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
         out_path.write_text('{"messages": []}', encoding="utf-8")
         return 0
 
-    # Tri chronologique — les CSV Discord sont souvent en ordre inverse
+    # Tri chronologique
     raw_messages.sort(key=lambda m: _parse_ts(m.get("timestamp", "")) or datetime.min)
-
     total = len(raw_messages)
-    kept  = 0
+
+    # ── Phase 1 : preflight ───────────────────────────────────────────────────
+    candidates = [m for m in raw_messages if not is_preflight_hrp(m.get("content", ""))]
+    if verbose:
+        dropped = total - len(candidates)
+        print(f"  {filepath.name}: {total} msgs — {dropped} preflight, {len(candidates)} → Mistral")
+
+    # ── Phase 2+3 : seed search + chain roll ──────────────────────────────────
+    last_rp: dict | None = None   # dernière graine confirmée RP
+    pending:  list[dict] = []     # messages en attente de classification LLM
+    kept = 0
     first = True
-    seed_msg: dict | None = None  # dernier message confirmé RP du chunk précédent
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write('{"messages": [')
 
-        for chunk_start in range(0, total, CHUNK_SIZE):
-            chunk = raw_messages[chunk_start: chunk_start + CHUNK_SIZE]
+        def write_msg(msg: dict) -> None:
+            nonlocal first, kept
+            f.write(("" if first else ",") + "\n  ")
+            json.dump(msg, f, ensure_ascii=False)
+            first = False
+            kept += 1
 
-            # ── pré-classification avec graine du chunk précédent ─────────
-            statuses = pre_classify_messages(chunk, seed_msg=seed_msg)
-
-            # ── LLM sur les incertains ────────────────────────────────────
-            uncertain_local = [i for i, s in enumerate(statuses) if s == "uncertain"]
-            if uncertain_local:
-                batch_msgs = [chunk[i] for i in uncertain_local]
-                _, _, results = next(iter(
-                    classify_messages_batched(batch_msgs, batch_size=len(batch_msgs), context_overlap=0)
-                ))
-                for local_i, clf in zip(uncertain_local, results):
-                    statuses[local_i] = "rp" if (clf["is_rp"] or clf["is_ooc"]) else "non_rp"
-
-                # ── extension de chaîne après résultats LLM ───────────────
-                statuses = extend_rp_chain(chunk, statuses)
-
-            # ── écriture du chunk dans l'ordre ────────────────────────────
-            auto_rp = sum(1 for s in statuses if s == "rp")
-            for msg, status in zip(chunk, statuses):
-                if status == "rp":
-                    f.write(("" if first else ",") + "\n  ")
-                    json.dump(msg, f, ensure_ascii=False)
-                    first = False
-                    kept += 1
-                    seed_msg = msg
-
+        def flush_pending() -> None:
+            nonlocal last_rp
+            if not pending:
+                return
+            _, _, results = next(iter(
+                classify_messages_batched(pending, batch_size=len(pending), context_overlap=0)
+            ))
+            for msg, clf in zip(pending, results):
+                if clf["is_rp"]:
+                    write_msg(msg)
+                    last_rp = msg          # nouvelle graine trouvée
+                elif last_rp is not None:
+                    last_rp = None         # chaîne rompue → retour en seed search
+            pending.clear()
             f.flush()
             if verbose:
-                done = chunk_start + len(chunk)
-                pct  = done * 100 // total
-                print(f"  {filepath.name}: {done}/{total} ({pct}%) — {kept} RP kept"
-                      f"  [{auto_rp}/{len(chunk)} auto]", end="\r")
+                print(f"  {filepath.name}: {kept} RP trouvés…", end="\r")
 
+        for msg in candidates:
+            # Héritage direct si pas de pending et graine active
+            if last_rp is not None and not pending and _can_inherit_rp(msg, last_rp):
+                write_msg(msg)
+                last_rp = msg
+            else:
+                pending.append(msg)
+                if len(pending) >= BATCH_SIZE:
+                    flush_pending()
+
+        flush_pending()
         f.write("\n]}")
 
     if verbose:
-        print(f"  {filepath.name}: {total} → {kept} RP kept, {total - kept} HRP dropped      ")
+        print(f"  {filepath.name}: {total} → {kept} RP, {total - kept} HRP      ")
 
     return kept
 
