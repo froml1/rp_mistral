@@ -40,7 +40,7 @@ def load_messages(filepath: Path) -> list[dict]:
     """Loads a JSON or CSV Discord export and returns normalized message dicts."""
     if filepath.suffix.lower() == ".csv":
         messages = []
-        with open(filepath, encoding="utf-8", newline="") as f:
+        with open(filepath, encoding="utf-8-sig", newline="") as f:
             sample = f.read(4096)
             f.seek(0)
             try:

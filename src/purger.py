@@ -14,79 +14,71 @@ import json
 import sys
 from pathlib import Path
 
-from analyzer import classify_messages_batched, pre_classify_messages, BATCH_SIZE
+from analyzer import (
+    classify_messages_batched, pre_classify_messages, extend_rp_chain,
+    BATCH_SIZE, _parse_ts,
+)
+from datetime import datetime
 from preprocessing import load_messages
 
 
 OUTPUT_DIR = Path("data/exports_filtered")
+CHUNK_SIZE  = BATCH_SIZE * 3  # messages traités par itération
 
 
 def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
     raw_messages = load_messages(filepath)
-    total = len(raw_messages)
-    if not total:
+    if not raw_messages:
         out_path.write_text('{"messages": []}', encoding="utf-8")
         return 0
 
-    # ── Phase 1 : pré-classification heuristique (sans LLM) ──────────────────
-    pre = pre_classify_messages(raw_messages)
-    uncertain_indices = [i for i, s in enumerate(pre) if s == "uncertain"]
-    auto_rp = sum(1 for s in pre if s == "rp")
+    # Tri chronologique — les CSV Discord sont souvent en ordre inverse
+    raw_messages.sort(key=lambda m: _parse_ts(m.get("timestamp", "")) or datetime.min)
 
-    if verbose:
-        print(f"  {filepath.name}: {total} msgs — "
-              f"{auto_rp} auto-RP, {len(uncertain_indices)} → Mistral")
-
-    # ── Phase 2 : classification LLM des messages incertains ─────────────────
-    # final_clf[i] = {"is_rp": bool, "is_ooc": bool} | None (pending)
-    final_clf: list[dict | None] = [None] * total
-    for i, status in enumerate(pre):
-        if status == "rp":
-            final_clf[i] = {"is_rp": True,  "is_ooc": False}
-        elif status == "non_rp":
-            final_clf[i] = {"is_rp": False, "is_ooc": False}
-
-    # Regrouper les incertains en batches dans leur ordre d'origine
-    uncertain_batches = [
-        uncertain_indices[b: b + BATCH_SIZE]
-        for b in range(0, len(uncertain_indices), BATCH_SIZE)
-    ]
-
-    # ── Phase 3 : écriture ordonnée, flush après chaque batch Mistral ────────
-    write_ptr = 0  # prochain index à écrire dans le fichier
-    kept = 0
+    total = len(raw_messages)
+    kept  = 0
     first = True
-
-    def _flush_resolved(f):
-        nonlocal write_ptr, kept, first
-        while write_ptr < total and final_clf[write_ptr] is not None:
-            clf = final_clf[write_ptr]
-            if clf["is_rp"] or clf["is_ooc"]:
-                f.write(("" if first else ",") + "\n  ")
-                json.dump(raw_messages[write_ptr], f, ensure_ascii=False)
-                first = False
-                kept += 1
-            write_ptr += 1
+    seed_msg: dict | None = None  # dernier message confirmé RP du chunk précédent
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write('{"messages": [')
 
-        for batch_indices in uncertain_batches:
-            batch_msgs = [raw_messages[i] for i in batch_indices]
-            # classify_messages_batched gère l'overlap en interne ;
-            # ici on appelle directement sur le sous-ensemble incertain
-            _, _, results = next(iter(classify_messages_batched(batch_msgs, batch_size=len(batch_msgs), context_overlap=0)))
-            for idx, clf in zip(batch_indices, results):
-                final_clf[idx] = clf
+        for chunk_start in range(0, total, CHUNK_SIZE):
+            chunk = raw_messages[chunk_start: chunk_start + CHUNK_SIZE]
 
-            _flush_resolved(f)
+            # ── pré-classification avec graine du chunk précédent ─────────
+            statuses = pre_classify_messages(chunk, seed_msg=seed_msg)
+
+            # ── LLM sur les incertains ────────────────────────────────────
+            uncertain_local = [i for i, s in enumerate(statuses) if s == "uncertain"]
+            if uncertain_local:
+                batch_msgs = [chunk[i] for i in uncertain_local]
+                _, _, results = next(iter(
+                    classify_messages_batched(batch_msgs, batch_size=len(batch_msgs), context_overlap=0)
+                ))
+                for local_i, clf in zip(uncertain_local, results):
+                    statuses[local_i] = "rp" if (clf["is_rp"] or clf["is_ooc"]) else "non_rp"
+
+                # ── extension de chaîne après résultats LLM ───────────────
+                statuses = extend_rp_chain(chunk, statuses)
+
+            # ── écriture du chunk dans l'ordre ────────────────────────────
+            auto_rp = sum(1 for s in statuses if s == "rp")
+            for msg, status in zip(chunk, statuses):
+                if status == "rp":
+                    f.write(("" if first else ",") + "\n  ")
+                    json.dump(msg, f, ensure_ascii=False)
+                    first = False
+                    kept += 1
+                    seed_msg = msg
+
             f.flush()
-
             if verbose:
-                pct = write_ptr * 100 // total
-                print(f"  {filepath.name}: {write_ptr}/{total} ({pct}%) — {kept} RP kept", end="\r")
+                done = chunk_start + len(chunk)
+                pct  = done * 100 // total
+                print(f"  {filepath.name}: {done}/{total} ({pct}%) — {kept} RP kept"
+                      f"  [{auto_rp}/{len(chunk)} auto]", end="\r")
 
-        _flush_resolved(f)  # vider ce qui reste (auto-classifiés en fin de fichier)
         f.write("\n]}")
 
     if verbose:

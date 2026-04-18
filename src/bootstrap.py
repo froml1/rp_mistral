@@ -72,7 +72,7 @@ OBJECT_CONTEXT_RE = re.compile(
 def load_export(path: Path) -> list[dict]:
     if path.suffix.lower() == ".csv":
         messages = []
-        with open(path, encoding="utf-8", newline="") as f:
+        with open(path, encoding="utf-8-sig", newline="") as f:
             sample = f.read(4096)
             f.seek(0)
             try:

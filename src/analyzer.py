@@ -29,39 +29,59 @@ def _parse_ts(ts: str) -> datetime | None:
         return None
 
 
-def pre_classify_messages(messages: list[dict]) -> list[str]:
+def _can_inherit_rp(msg: dict, prev_msg: dict) -> bool:
+    content = msg.get("content", "").strip()
+    if _SCENE_BREAK.match(content) or _PARENS.search(content):
+        return False
+    if _SCENE_BREAK.match(prev_msg.get("content", "").strip()):
+        return False
+    ts_cur  = _parse_ts(msg.get("timestamp", ""))
+    ts_prev = _parse_ts(prev_msg.get("timestamp", ""))
+    if not (ts_cur and ts_prev):
+        return False
+    return abs((ts_cur - ts_prev).total_seconds()) <= _RP_GAP_SECS
+
+
+def pre_classify_messages(messages: list[dict], seed_msg: dict | None = None) -> list[str]:
     """
     Fast heuristic pass — no LLM.
     Returns per-message: 'rp', 'non_rp', or 'uncertain'.
-
-    Auto-'rp' when ALL conditions hold:
-      - previous confirmed 'rp'
-      - timestamp gap ≤ 5 min
-      - neither message is a scene-break line (---, ___, ***)
-      - content has no parentheses (OOC marker)
-    Scene-break lines → 'non_rp'.
-    Everything else → 'uncertain'.
+    seed_msg: last confirmed-RP message from a previous chunk.
     """
     statuses: list[str] = []
-    for i, msg in enumerate(messages):
-        content = msg.get("content", "").strip()
+    prev_msg: dict | None = seed_msg
+    prev_is_rp: bool = seed_msg is not None
 
-        if _SCENE_BREAK.match(content):
+    for msg in messages:
+        if _SCENE_BREAK.match(msg.get("content", "").strip()):
             statuses.append("non_rp")
-            continue
+            prev_is_rp = False
+        elif prev_is_rp and prev_msg is not None and _can_inherit_rp(msg, prev_msg):
+            statuses.append("rp")
+            prev_is_rp = True
+        else:
+            statuses.append("uncertain")
+            prev_is_rp = False
+        prev_msg = msg
 
-        if i > 0 and statuses[i - 1] == "rp":
-            prev = messages[i - 1]
-            if not _SCENE_BREAK.match(prev.get("content", "").strip()):
-                ts_cur  = _parse_ts(msg.get("timestamp", ""))
-                ts_prev = _parse_ts(prev.get("timestamp", ""))
-                if ts_cur and ts_prev:
-                    gap = abs((ts_cur - ts_prev).total_seconds())
-                    if gap <= _RP_GAP_SECS and not _PARENS.search(content):
-                        statuses.append("rp")
-                        continue
+    return statuses
 
-        statuses.append("uncertain")
+
+def extend_rp_chain(messages: list[dict], statuses: list[str]) -> list[str]:
+    """
+    After LLM results are merged, cascade the RP chain:
+    any 'uncertain' following a confirmed 'rp' that meets continuity → 'rp'.
+    Repeats until stable.
+    """
+    statuses = list(statuses)
+    changed = True
+    while changed:
+        changed = False
+        for i in range(1, len(messages)):
+            if statuses[i] == "uncertain" and statuses[i - 1] == "rp":
+                if _can_inherit_rp(messages[i], messages[i - 1]):
+                    statuses[i] = "rp"
+                    changed = True
     return statuses
 
 
