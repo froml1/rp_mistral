@@ -61,12 +61,14 @@ def index_exports(exports_dir: str, extract_lore: bool = False, tag_scenes: bool
     documents = []
     total_scenes = 0
 
-    for filepath in json_files:
-        print(f"Processing: {filepath.name}")
+    for f_idx, filepath in enumerate(json_files, 1):
+        print(f"[{f_idx}/{len(json_files)}] {filepath.name}")
         messages = process_export(filepath, config, lore=lore)
-        scenes = group_into_scenes(messages)
+        scenes   = group_into_scenes(messages)
+        n_scenes = len(scenes)
 
-        for scene in scenes:
+        for s_idx, scene in enumerate(scenes, 1):
+            print(f"  scène {s_idx}/{n_scenes}", end="\r")
             stags = tag_scene(scene_text_preview(scene)) if tag_scenes else []
             text, metadata = scene_to_text(scene, alias_map, scene_tags=stags)
             if len(text.strip()) < 50:
@@ -77,7 +79,9 @@ def index_exports(exports_dir: str, extract_lore: bool = False, tag_scenes: bool
                 source = f"{filepath.stem}:{metadata.get('start', '')}"
                 extract_and_merge(text, source, verbose=True)
 
-    print(f"→ {total_scenes} scenes to index from {len(json_files)} files")
+        print(f"  {n_scenes} scènes — {len(messages)} messages      ")
+
+    print(f"→ {total_scenes} scènes à indexer depuis {len(json_files)} fichier(s)")
 
     vector_store = get_vector_store()
     storage_context = StorageContext.from_defaults(vector_store=vector_store)

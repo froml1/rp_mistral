@@ -36,10 +36,12 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
     raw_messages.sort(key=lambda m: _parse_ts(m.get("timestamp", "")) or datetime.min)
     total = len(raw_messages)
 
-    block_active = False
-    last_ts      = None
-    kept         = 0
-    first        = True
+    block_active   = False
+    last_ts        = None
+    scene_id       = 0
+    kept           = 0
+    first          = True
+    prev_context: list[str] = []   # derniers contenus de la scène active (pour classify_opener)
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write('{"messages": [')
@@ -48,10 +50,11 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
             content = msg.get("content", "").strip()
             ts      = _parse_ts(msg.get("timestamp", ""))
 
-            # ── fin de bloc : gap > 1h ────────────────────────────────────
+            # ── fin de bloc : gap > 1h (contexte effacé — trop loin) ─────
             if block_active and last_ts and ts:
                 if (ts - last_ts).total_seconds() > _BLOCK_END_SECS:
                     block_active = False
+                    prev_context = []
 
             if ts:
                 last_ts = ts
@@ -65,25 +68,35 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
             if is_preflight_hrp(content):
                 continue
 
-            # ── hors bloc : '*' + Mistral valide le style littéraire ─────
+            # ── hors bloc : '*' + Mistral valide ouverture et continuité ─
             if not block_active:
-                if is_preflight_rp(content) and classify_opener(content):
-                    block_active = True
-                    if verbose:
-                        print(f"\n  ↳ ouverture bloc : {content[:60]}")
+                if is_preflight_rp(content):
+                    is_opener, is_new_scene = classify_opener(content, prev_context or None)
+                    if is_opener:
+                        block_active = True
+                        if is_new_scene or scene_id == 0:
+                            scene_id += 1
+                            prev_context = []
+                        if verbose:
+                            tag = "nouvelle scène" if is_new_scene else "reprise scène"
+                            print(f"\n  ↳ scène {scene_id} [{tag}] : {content[:55]}")
+                    else:
+                        continue
                 else:
                     continue
 
-            # ── dans le bloc : conservation ───────────────────────────────
+            # ── dans le bloc : écriture avec tag scène ────────────────────
             f.write(("" if first else ",") + "\n  ")
-            json.dump(msg, f, ensure_ascii=False)
+            json.dump({**msg, "_scene": scene_id}, f, ensure_ascii=False)
             first = False
             kept += 1
+            prev_context.append(content)
+            if len(prev_context) > 10:
+                prev_context.pop(0)
 
             if verbose and (i + 1) % 10 == 0:
-                pct    = (i + 1) * 100 // total
-                status = "bloc" if block_active else "hors-bloc"
-                print(f"  {filepath.name}: {i+1}/{total} ({pct}%) — {kept} RP  [{status}]", end="\r")
+                pct = (i + 1) * 100 // total
+                print(f"  {filepath.name}: {i+1}/{total} ({pct}%) — {kept} RP  [{scene_id} scènes]", end="\r")
 
         f.write("\n]}")
         f.flush()

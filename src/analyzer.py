@@ -129,21 +129,35 @@ _OPENER_SYSTEM = (
 )
 
 _OPENER_PROMPT = """\
-Ce message est-il une ouverture de scène de roleplay au style littéraire ?
+{context_block}Message candidat à l'ouverture :
+{content}
 
-Critères d'une vraie ouverture RP :
-- Action narrative entre *astérisques* avec un sujet (personnage en mouvement, geste, expression)
-- Style descriptif ou littéraire (atmosphère, émotion, sensation)
-- Peut ouvrir une scène de manière autonome
+Réponds à deux questions :
+1. is_opener : ce message est-il une ouverture RP de style littéraire ?
+   (action narrative entre *astérisques*, style descriptif, peut ouvrir une scène de façon autonome)
+2. is_new_scene : si is_opener est true, s'agit-il d'une NOUVELLE scène ou d'une REPRISE de la scène précédente ?
+   - Nouvelle scène : personnages différents, lieu différent, ou rupture thématique claire
+   - Reprise : mêmes personnages, même lieu, continuité narrative directe
 
-Retourne uniquement : {{"is_opener": true}} ou {{"is_opener": false}}
-
-Message : {content}"""
+Retourne uniquement : {{"is_opener": true/false, "is_new_scene": true/false}}"""
 
 
-def classify_opener(content: str) -> bool:
-    """Demande à Mistral si le message est une ouverture RP de style littéraire."""
-    prompt = _OPENER_SYSTEM + "\n\n" + _OPENER_PROMPT.format(content=content)
+def classify_opener(content: str, prev_context: list[str] | None = None) -> tuple[bool, bool]:
+    """
+    Demande à Mistral si le message est une ouverture RP littéraire.
+    Retourne (is_opener, is_new_scene).
+    prev_context : derniers messages de la scène précédente (pour détecter les reprises).
+    """
+    if prev_context:
+        ctx = "Contexte de la scène précédente :\n"
+        ctx += "\n".join(f"  {m}" for m in prev_context[-5:])
+        ctx += "\n\n"
+    else:
+        ctx = ""
+
+    prompt = _OPENER_SYSTEM + "\n\n" + _OPENER_PROMPT.format(
+        context_block=ctx, content=content
+    )
     try:
         resp = requests.post(
             OLLAMA_URL,
@@ -152,10 +166,12 @@ def classify_opener(content: str) -> bool:
         )
         resp.raise_for_status()
         data = json.loads(resp.json().get("response", "{}"))
-        return bool(data.get("is_opener", False))
+        is_opener    = bool(data.get("is_opener", False))
+        is_new_scene = bool(data.get("is_new_scene", True))
+        return is_opener, is_new_scene
     except Exception as e:
         print(f"  [analyzer] opener error: {e}", file=sys.stderr)
-        return False
+        return False, True
 
 MSG_TAG_VOCAB = ["action", "dialogue", "descriptif", "pensée", "nsfw_hint"]
 

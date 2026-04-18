@@ -105,6 +105,7 @@ def process_export(
         ) or "unknown"
         raw_content = msg.get("content", "").strip()
         timestamp = msg.get("timestamp", "")
+        scene_id  = msg.get("_scene")
 
         if not raw_content:
             continue
@@ -136,22 +137,33 @@ def process_export(
                 "arc": arc,
                 "timestamp": timestamp,
                 "ooc": analysis["is_ooc"],
+                "scene": scene_id,
             },
         ))
 
     return results
 
 
-def group_into_scenes(messages: list[MessageRP], max_size: int = 30) -> list[list[MessageRP]]:
-    scenes, current = [], []
+def group_into_scenes(messages: list[MessageRP]) -> list[list[MessageRP]]:
+    if not messages:
+        return []
+    # Utilise le tag _scene injecté par le purger si disponible
+    if messages[0].metadata.get("scene") is not None:
+        scenes: dict[int, list[MessageRP]] = {}
+        for msg in messages:
+            sid = msg.metadata.get("scene", 0)
+            scenes.setdefault(sid, []).append(msg)
+        return [scenes[k] for k in sorted(scenes)]
+    # Fallback : fenêtre fixe
+    scenes_list, current = [], []
     for msg in messages:
         current.append(msg)
-        if len(current) >= max_size:
-            scenes.append(current)
+        if len(current) >= 30:
+            scenes_list.append(current)
             current = []
     if current:
-        scenes.append(current)
-    return scenes
+        scenes_list.append(current)
+    return scenes_list
 
 
 def scene_to_text(
