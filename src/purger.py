@@ -19,7 +19,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from analyzer import is_preflight_hrp, is_preflight_rp, _parse_ts, _SCENE_BREAK
+from analyzer import is_preflight_hrp, is_preflight_rp, classify_opener, _parse_ts, _SCENE_BREAK
 from preprocessing import load_messages
 
 
@@ -65,10 +65,12 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
             if is_preflight_hrp(content):
                 continue
 
-            # ── hors bloc : seule une '*' peut démarrer ───────────────────
+            # ── hors bloc : '*' + Mistral valide le style littéraire ─────
             if not block_active:
-                if is_preflight_rp(content):
+                if is_preflight_rp(content) and classify_opener(content):
                     block_active = True
+                    if verbose:
+                        print(f"\n  ↳ ouverture bloc : {content[:60]}")
                 else:
                     continue
 

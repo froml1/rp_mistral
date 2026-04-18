@@ -114,6 +114,40 @@ def extend_rp_chain(messages: list[dict], statuses: list[str]) -> list[str]:
 LLM_MODEL = "mistral"
 BATCH_SIZE = 10
 
+_OPENER_SYSTEM = (
+    "Tu es un classificateur de messages pour jeu de rôle narratif sur Discord. "
+    "Tu retournes UNIQUEMENT du JSON valide, sans texte supplémentaire."
+)
+
+_OPENER_PROMPT = """\
+Ce message est-il une ouverture de scène de roleplay au style littéraire ?
+
+Critères d'une vraie ouverture RP :
+- Action narrative entre *astérisques* avec un sujet (personnage en mouvement, geste, expression)
+- Style descriptif ou littéraire (atmosphère, émotion, sensation)
+- Peut ouvrir une scène de manière autonome
+
+Retourne uniquement : {{"is_opener": true}} ou {{"is_opener": false}}
+
+Message : {content}"""
+
+
+def classify_opener(content: str) -> bool:
+    """Demande à Mistral si le message est une ouverture RP de style littéraire."""
+    prompt = _OPENER_SYSTEM + "\n\n" + _OPENER_PROMPT.format(content=content)
+    try:
+        resp = requests.post(
+            OLLAMA_URL,
+            json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False},
+            timeout=60,
+        )
+        resp.raise_for_status()
+        data = json.loads(resp.json().get("response", "{}"))
+        return bool(data.get("is_opener", False))
+    except Exception as e:
+        print(f"  [analyzer] opener error: {e}", file=sys.stderr)
+        return False
+
 MSG_TAG_VOCAB = ["action", "dialogue", "descriptif", "pensée", "nsfw_hint"]
 
 _SYSTEM = (
