@@ -6,9 +6,11 @@ structured analysis: RP/HRP classification, character attribution,
 speaker segmentation, and structural tags.
 """
 
+import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import os, time
+from pathlib import Path
 import re
 import sys
 from datetime import datetime
@@ -157,7 +159,8 @@ def extend_rp_chain(messages: list[dict], statuses: list[str]) -> list[str]:
 
 
 LLM_MODEL = "mistral"
-BATCH_SIZE = 12
+BATCH_SIZE = 20
+_CACHE_DIR = Path("data/analysis_cache")
 
 _OPENER_SYSTEM = (
     "Tu es un classificateur de messages pour jeu de rôle narratif sur Discord. "
@@ -234,19 +237,13 @@ _SYSTEM = (
 _PROMPT = """\
 Alias : {aliases}
 
-Classifie chaque message Discord.
-
-Retourne pour chaque message :
-- characters : personnages actifs
-- referenced : personnages mentionnés
-- speaker_segments : découpe simple texte → action / dialogue / narration
+Pour chaque message retourne :
+- characters : personnages actifs (noms canoniques)
+- referenced : personnages mentionnés mais non actifs
+- speaker_segments : [text, character|null, type=action|dialogue|narration]
 - tags : max 2 parmi {vocab}
 
-Règles :
-- alias → nom canonique
-- speaker_segments = découpage léger (pas fin)
-
-Retour JSON :
+Retour JSON strict :
 {{"messages":[{{"index":0,"characters":[],"referenced":[],"speaker_segments":[{{"text":"","character":null,"type":"narration"}}],"tags":[]}}]}}
 
 Messages :
@@ -302,10 +299,10 @@ def analyze_batch(
             json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False, "options": {
             "temperature": 0,
             "top_k": 1,
-            "num_predict": 250,
+            "num_predict": 1024,
             "num_ctx": 4096
         }},
-            timeout=120,
+            timeout=180,
         )
         resp.raise_for_status()
         raw = resp.json().get("response", "{}")
@@ -488,6 +485,32 @@ def worker_analyze(messages, start, ctx_start, batch, alias_map):
     return out
 
 
+def _cache_key(messages: list[dict], alias_map: dict | None) -> str:
+    payload = json.dumps(
+        [{"a": m.get("author"), "c": m.get("content"), "t": m.get("timestamp")} for m in messages],
+        ensure_ascii=False, sort_keys=True,
+    )
+    alias_str = json.dumps(alias_map or {}, sort_keys=True)
+    return hashlib.sha1((payload + alias_str).encode()).hexdigest()
+
+
+def _load_cache(key: str) -> list[dict] | None:
+    path = _CACHE_DIR / f"{key}.json"
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return None
+
+
+def _save_cache(key: str, results: list[dict]) -> None:
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    (_CACHE_DIR / f"{key}.json").write_text(
+        json.dumps(results, ensure_ascii=False), encoding="utf-8"
+    )
+
+
 def analyze_messages(
     messages: list[dict],
     alias_map: dict[str, str] | None = None,
@@ -496,34 +519,35 @@ def analyze_messages(
 ) -> list[dict]:
     """
     Analyzes all messages, processing in overlapping batches to preserve
-    narrative context at batch boundaries.
+    narrative context at batch boundaries. Results are cached by content hash.
 
     Returns one analysis dict per input message.
     """
     if not messages:
         return []
 
+    key = _cache_key(messages, alias_map)
+    cached = _load_cache(key)
+    if cached is not None:
+        print(f"  [analyzer] cache hit ({len(messages)} messages)")
+        return cached
+
     results: list[dict | None] = [None] * len(messages)
-    count = 1
-    batches = []
     jobs = []
     for start in range(0, len(messages), batch_size):
-        count += 1
         end = min(start + batch_size, len(messages))
         ctx_start = max(0, start - context_overlap)
         batch = messages[ctx_start:end]
-        batches.append(batch)
         jobs.append((messages, start, ctx_start, batch, alias_map))
 
     max_workers = min(1, os.cpu_count() or 1)
-    futures = []
-    all_outputs  = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(worker_analyze, *job) for job in jobs]
-        all_outputs = [future.result() for future in futures]
-    
+        all_outputs = [future.result() for future in [executor.submit(worker_analyze, *job) for job in jobs]]
+
     for output in all_outputs:
         for idx, value in output:
             results[idx] = value
 
-    return [r if r is not None else _default() for r in results]
+    final = [r if r is not None else _default() for r in results]
+    _save_cache(key, final)
+    return final
