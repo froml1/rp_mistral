@@ -10,6 +10,7 @@ Usage:
   python src/purger.py [data/exports/]
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -43,13 +44,13 @@ def purge_all(exports_dir: str = "data/exports"):
 
     json_files = list(input_path.glob("**/*.json")) + list(input_path.glob("**/*.csv"))
     if not json_files:
-        print(f"No JSON files found in {exports_dir}")
+        print(f"No export files (.json / .csv) found in {exports_dir}")
         return
 
     print(f"Purging {len(json_files)} file(s) → {OUTPUT_DIR}/")
     for filepath in json_files:
         filtered = purge_export(filepath)
-        out_path = OUTPUT_DIR / filepath.name
+        out_path = OUTPUT_DIR / (filepath.stem + ".json")
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(filtered, f, ensure_ascii=False, indent=2)
 
