@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
-from analyzer import is_preflight_hrp, is_preflight_rp, classify_opener, _parse_ts, _SCENE_BREAK
+from analyzer import is_preflight_hrp, is_preflight_rp, classify_opener, _parse_ts
 from preprocessing import load_messages
 
 

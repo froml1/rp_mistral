@@ -44,13 +44,9 @@ Analyse cette scène de roleplay et retourne :
 - referenced : personnages mentionnés mais non présents
 - location   : lieu de la scène (null si non précisé)
 - themes     : 2-4 tags parmi {vocab}
-- lore       : extraits de lore détectés :
-    - relations  : [{{"from":"","rel":"","to":"","state":"est","confidence":"high|low"}}]
-    - facts      : ["fait d'univers : langue, magie, loi sociale, coutume"]
-    - knowledge  : {{"Personnage": {{"sait":[], "croit":[], "ne_sait_pas":[]}}}}
 
 Retour JSON strict :
-{{"summary":"","characters":[],"referenced":[],"location":null,"themes":[],"lore":{{"relations":[],"facts":[],"knowledge":{{}}}}}}
+{{"summary":"","characters":[],"referenced":[],"location":null,"themes":[]}}
 
 Scène :
 ---
@@ -65,14 +61,12 @@ def _empty() -> dict:
         "referenced": [],
         "location":   None,
         "themes":     [],
-        "lore": {"relations": [], "facts": [], "knowledge": {}},
     }
 
 
 def synthesize_scene(
     scene_text: str,
     alias_map: dict | None = None,
-    extract_lore: bool = True,
 ) -> dict:
     """
     One Mistral call per scene.
@@ -107,16 +101,10 @@ def synthesize_scene(
         print(f"  [synthesizer] error: {e}", file=sys.stderr)
         return _empty()
 
-    lore_raw = data.get("lore") or {}
     return {
         "summary":    str(data.get("summary") or ""),
         "characters": [str(c) for c in (data.get("characters") or [])],
         "referenced": [str(c) for c in (data.get("referenced") or [])],
         "location":   data.get("location"),
         "themes":     [t for t in (data.get("themes") or []) if t in SCENE_TAG_VOCAB],
-        "lore": {
-            "relations": [r for r in (lore_raw.get("relations") or []) if isinstance(r, dict)],
-            "facts":     [f for f in (lore_raw.get("facts") or []) if isinstance(f, str)],
-            "knowledge": lore_raw.get("knowledge") or {},
-        } if extract_lore else {"relations": [], "facts": [], "knowledge": {}},
     }

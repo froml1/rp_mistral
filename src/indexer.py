@@ -14,7 +14,7 @@ from llama_index.vector_stores.chroma import ChromaVectorStore
 
 from preprocessing import load_config, load_messages, build_alias_map, group_raw_into_scenes, raw_scene_to_text
 from lore import load_lore
-from lore_extractor import merge_into_lore
+from lore_extractor import extract_and_merge
 from scene_synthesizer import synthesize_scene
 
 
@@ -69,7 +69,7 @@ def index_exports(exports_dir: str, extract_lore: bool = False):
             if len(scene_text.strip()) < 50:
                 continue
 
-            synthesis = synthesize_scene(scene_text, alias_map=alias_map, extract_lore=extract_lore)
+            synthesis = synthesize_scene(scene_text, alias_map=alias_map)
 
             if not synthesis["summary"]:
                 continue
@@ -94,10 +94,9 @@ def index_exports(exports_dir: str, extract_lore: bool = False):
             documents.append(Document(text=indexed_text, metadata=metadata))
             total_scenes += 1
 
-            if extract_lore and synthesis["lore"]:
-                source    = f"{filepath.stem}:{start_ts}"
-                lore_data = _synthesis_lore_to_extracted(synthesis["lore"])
-                merge_into_lore(lore_data, source)
+            if extract_lore and synthesis["summary"]:
+                source = f"{filepath.stem}:{start_ts}"
+                extract_and_merge(synthesis["summary"], source, verbose=True)
 
         print(f"  {n_scenes} scènes — {len(raw_messages)} messages      ")
 
@@ -108,23 +107,6 @@ def index_exports(exports_dir: str, extract_lore: bool = False):
     VectorStoreIndex.from_documents(documents, storage_context=storage_context, show_progress=True)
     print(f"Indexing complete. Store saved to {CHROMA_PATH}/")
 
-
-def _synthesis_lore_to_extracted(lore: dict) -> dict:
-    """Adapte le lore de la synthèse au format attendu par merge_into_lore."""
-    knowledge = {}
-    for char, buckets in (lore.get("knowledge") or {}).items():
-        knowledge[char] = {
-            "sait":        [{"description": d} for d in (buckets.get("sait") or []) if isinstance(d, str)],
-            "croit":       [{"description": d} for d in (buckets.get("croit") or []) if isinstance(d, str)],
-            "ne_sait_pas": [{"description": d} for d in (buckets.get("ne_sait_pas") or []) if isinstance(d, str)],
-        }
-    return {
-        "relations":          lore.get("relations") or [],
-        "universe_rules":     lore.get("facts") or [],
-        "character_knowledge": knowledge,
-        "characters": {}, "places": {}, "events": {}, "objects": {},
-        "cultures": {}, "intentions": {}, "narrative_axes": {},
-    }
 
 
 if __name__ == "__main__":
