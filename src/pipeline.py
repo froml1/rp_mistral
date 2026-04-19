@@ -1,5 +1,5 @@
 """
-RP_IA Pipeline — single entry point.
+RP_IA Pipeline - single entry point.
 
 Usage:
   python src/pipeline.py [exports_dir] [options]
@@ -10,10 +10,10 @@ Options:
   --scene SCENE_ID Process only this scene (step 4 only)
 
 Steps:
-  1 — Purge       data/exports/   → data/purged/
-  2 — Translate   data/purged/    → data/translated/
-  3 — Subdivide   data/translated/ → data/scenes/
-  4 — Analyze     data/scenes/    → data/analysis/{scene_id}/
+  1 - Purge       data/exports/   -> data/purged/
+  2 - Translate   data/purged/    -> data/translated/
+  3 - Subdivide   data/translated/ -> data/scenes/
+  4 - Analyze     data/scenes/    -> data/analysis/{scene_id}/
                                      data/lore/characters/
                                      data/lore/places/
 """
@@ -77,19 +77,19 @@ def run_pipeline(
         return step >= from_step
 
     if should_run(1):
-        print("\n== STEP 1 — PURGE ==")
+        print("\n== STEP 1 - PURGE ==")
         run_purge(Path(exports_dir), PURGED_DIR)
 
     if should_run(2):
-        print("\n== STEP 2 — TRANSLATE ==")
+        print("\n== STEP 2 - TRANSLATE ==")
         run_translate(PURGED_DIR, TRANSLATED_DIR)
 
     if should_run(3):
-        print("\n== STEP 3 — SUBDIVIDE ==")
+        print("\n== STEP 3 - SUBDIVIDE ==")
         run_subdivide(TRANSLATED_DIR, SCENES_DIR)
 
     if should_run(4):
-        print("\n== STEP 4 — ANALYZE ==")
+        print("\n== STEP 4 - ANALYZE ==")
         scene_files = sorted(SCENES_DIR.glob("**/*.json"))
         if not scene_files:
             print("  No scene files found. Run step 3 first.")

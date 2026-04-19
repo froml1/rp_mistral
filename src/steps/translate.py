@@ -1,4 +1,4 @@
-"""Step 2 — Translate: add content_en field to each message."""
+"""Step 2 - Translate: add content_en field to each message."""
 
 import json
 import sys
@@ -43,7 +43,7 @@ def run_translate(purged_dir: Path, out_dir: Path) -> list[Path]:
     for fp in files:
         out_path = out_dir / fp.name
         if out_path.exists():
-            print(f"  [skip] {fp.name} → already translated")
+            print(f"  [skip] {fp.name} -> already translated")
             produced.append(out_path)
             continue
 

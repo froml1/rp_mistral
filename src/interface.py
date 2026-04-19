@@ -55,12 +55,14 @@ def _run_pipeline(from_step, only_step, scene_id, exports_dir):
     _pipeline_log.append(f"[pipeline exists] {(SRC_DIR / 'pipeline.py').exists()}")
 
     try:
+        env = {**__import__("os").environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
         _pipeline_proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
+            env=env,
             cwd=str(ROOT),
         )
         for line in _pipeline_proc.stdout:

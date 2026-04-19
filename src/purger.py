@@ -1,5 +1,5 @@
 """
-RP/HRP separator — pre-processing pass before indexing.
+RP/HRP separator - pre-processing pass before indexing.
 
 Reads raw Discord exports, writes filtered exports (RP only).
 
@@ -136,16 +136,16 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
                 gap = (ts - last_ts).total_seconds()
                 if verbose and gap > 60:
                     mins = int(gap // 60)
-                    print(f"\n  [gap {mins}min] {'bloc actif' if block_active else 'hors bloc'} | scène {scene_id} | {ts.strftime('%Y-%m-%d %H:%M')}")
+                    print(f"\n  [gap {mins}min] {'bloc actif' if block_active else 'hors bloc'} | scene {scene_id} | {ts.strftime('%Y-%m-%d %H:%M')}")
                 if block_active:
                     if gap > _BLOCK_END_SECS:
                         block_active = False
                         if verbose:
-                            print(f"  → fin de bloc (gap {int(gap//60)}min > 60min)")
+                            print(f"  -> fin de bloc (gap {int(gap//60)}min > 60min)")
                     elif gap > _SCENE_BREAK_SECS:
                         scene_id += 1
                         if verbose:
-                            print(f"  → nouvelle scène {scene_id} (gap {int(gap//60)}min > 30min)")
+                            print(f"  -> nouvelle scene {scene_id} (gap {int(gap//60)}min > 30min)")
             if ts:
                 last_ts = ts
 
@@ -160,10 +160,10 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
                         block_active = True
                         scene_id += 1
                         if verbose:
-                            print(f"  ↳ BLOC OUVERT — scène {scene_id} | {ts.strftime('%Y-%m-%d %H:%M') if ts else '?'}")
+                            print(f"  -> BLOC OUVERT - scene {scene_id} | {ts.strftime('%Y-%m-%d %H:%M') if ts else '?'}")
                     else:
                         if verbose:
-                            print(f"  [rejeté] {content[:60]}")
+                            print(f"  [rejete] {content[:60]}")
                         continue
                 else:
                     continue
@@ -175,12 +175,12 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
 
             if verbose and (i + 1) % 10 == 0:
                 pct = (i + 1) * 100 // total
-                print(f"  {filepath.name}: {i+1}/{total} ({pct}%) — {kept} RP [{scene_id} scènes]", end="\r")
+                print(f"  {filepath.name}: {i+1}/{total} ({pct}%) - {kept} RP [{scene_id} scenes]", end="\r")
 
         f.write("\n]}")
 
     if verbose:
-        print(f"  {filepath.name}: {total} → {kept} RP, {total - kept} HRP")
+        print(f"  {filepath.name}: {total} -> {kept} RP, {total - kept} HRP")
 
     return kept
 

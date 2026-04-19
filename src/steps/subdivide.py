@@ -1,4 +1,4 @@
-"""Step 3 — Subdivide: group messages into scenes, verify coherence, split if needed."""
+"""Step 3 - Subdivide: group messages into scenes, verify coherence, split if needed."""
 
 import json
 import sys
@@ -51,7 +51,7 @@ def _subdivide(messages: list[dict], depth: int = 0) -> list[list[dict]]:
     if not isinstance(split_at, int) or not (1 <= split_at < len(messages) - 1):
         return [messages]
 
-    print(f"  {'  ' * depth}split at msg {split_at} — {data.get('reason', '')}")
+    print(f"  {'  ' * depth}split at msg {split_at} - {data.get('reason', '')}")
     return _subdivide(messages[:split_at], depth + 1) + _subdivide(messages[split_at:], depth + 1)
 
 
@@ -76,7 +76,7 @@ def run_subdivide(translated_dir: Path, out_dir: Path) -> list[Path]:
         file_out_dir = out_dir / fp.stem
         if file_out_dir.exists() and any(file_out_dir.glob("*.json")):
             existing = list(file_out_dir.glob("*.json"))
-            print(f"  [skip] {fp.name} → {len(existing)} scenes already split")
+            print(f"  [skip] {fp.name} -> {len(existing)} scenes already split")
             produced.extend(existing)
             continue
 
@@ -104,6 +104,6 @@ def run_subdivide(translated_dir: Path, out_dir: Path) -> list[Path]:
                 produced.append(scene_path)
                 scene_idx += 1
 
-        print(f"  → {scene_idx} final scenes")
+        print(f"  -> {scene_idx} final scenes")
 
     return produced
