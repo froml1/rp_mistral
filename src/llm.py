@@ -23,10 +23,10 @@ def call_llm(prompt: str, fmt: str | None = None, num_predict: int = -1, num_ctx
         resp = requests.post(OLLAMA_URL, json=payload, timeout=300)
         resp.raise_for_status()
         raw = resp.json().get("response", "")
-        print(f"    [llm] {len(raw)} chars")
+        print(f"    [llm] {len(raw)} chars", flush=True)
         return raw
     except Exception as e:
-        print(f"    [llm] error: {e}", file=sys.stderr)
+        print(f"    [llm] error: {e}", file=sys.stderr, flush=True)
         return ""
 
 

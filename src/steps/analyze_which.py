@@ -12,6 +12,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
 
+
+def _is_valid_json(path: Path) -> bool:
+    try:
+        json.loads(path.read_text(encoding="utf-8"))
+        return True
+    except Exception:
+        return False
+
 _PROMPT = """\
 Analyze the CONCEPTS present in this RP scene.
 Concepts are named, specific elements that are neither characters nor locations nor events.
@@ -104,10 +112,15 @@ def _scene_text(messages: list[dict]) -> str:
 
 def run_which(scene_file: Path, analysis_dir: Path, concepts_dir: Path) -> dict:
     out_path = analysis_dir / "which.json"
-    if out_path.exists():
+    if out_path.exists() and _is_valid_json(out_path):
         print(f"    [skip] which already done")
         return json.loads(out_path.read_text(encoding="utf-8"))
+    if out_path.exists():
+        print(f"    [corrupt] which.json malformed, re-analyzing...")
 
+    if not _is_valid_json(scene_file):
+        print(f"    [error] scene file {scene_file.name} is malformed, delete it and re-run step 3")
+        return {}
     with open(scene_file, encoding="utf-8") as f:
         scene = json.load(f)
 

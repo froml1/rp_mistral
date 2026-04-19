@@ -64,7 +64,15 @@ def _group_by_scene_tag(messages: list[dict]) -> list[list[dict]]:
     return [scenes[k] for k in sorted(scenes)] if scenes else [messages]
 
 
-def run_subdivide(translated_dir: Path, out_dir: Path) -> list[Path]:
+def _is_valid_json(path: Path) -> bool:
+    try:
+        json.loads(path.read_text(encoding="utf-8"))
+        return True
+    except Exception:
+        return False
+
+
+def run_subdivide(translated_dir: Path, out_dir: Path, purged_dir: Path | None = None) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     files = list(translated_dir.glob("**/*.json"))
     if not files:
@@ -76,13 +84,27 @@ def run_subdivide(translated_dir: Path, out_dir: Path) -> list[Path]:
         file_out_dir = out_dir / fp.stem
         if file_out_dir.exists() and any(file_out_dir.glob("*.json")):
             existing = list(file_out_dir.glob("*.json"))
-            print(f"  [skip] {fp.name} -> {len(existing)} scenes already split")
-            produced.extend(existing)
-            continue
+            invalid = [f for f in existing if not _is_valid_json(f)]
+            if not invalid:
+                print(f"  [skip] {fp.name} -> {len(existing)} scenes already split")
+                produced.extend(existing)
+                continue
+            print(f"  [corrupt] {len(invalid)} scene file(s) malformed in {file_out_dir.name}, re-subdividing...")
+            for f in existing:
+                f.unlink()
 
         file_out_dir.mkdir(parents=True, exist_ok=True)
         print(f"  Subdividing {fp.name}...")
 
+        if not _is_valid_json(fp):
+            if purged_dir:
+                print(f"  [corrupt] {fp.name} is malformed, re-translating...")
+                from steps.translate import run_translate
+                fp.unlink()
+                run_translate(purged_dir, translated_dir, exports_dir=None)
+            else:
+                print(f"  [error] {fp.name} is malformed and purged_dir unknown, skipping")
+                continue
         with open(fp, encoding="utf-8") as f:
             data = json.load(f)
         messages = data.get("messages", data) if isinstance(data, dict) else data

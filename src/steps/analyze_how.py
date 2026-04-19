@@ -10,6 +10,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
 
+
+def _is_valid_json(path: Path) -> bool:
+    try:
+        json.loads(path.read_text(encoding="utf-8"))
+        return True
+    except Exception:
+        return False
+
 _HOW_YAML = Path(__file__).parent.parent.parent / "data" / "lore" / "how_context.yaml"
 
 _PROMPT = """\
@@ -69,10 +77,15 @@ def _save_how_context(scene_id: str, synthesis: str):
 
 def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: dict, which: dict, what: dict) -> dict:
     out_path = analysis_dir / "how.json"
-    if out_path.exists():
+    if out_path.exists() and _is_valid_json(out_path):
         print(f"    [skip] how already done")
         return json.loads(out_path.read_text(encoding="utf-8"))
+    if out_path.exists():
+        print(f"    [corrupt] how.json malformed, re-analyzing...")
 
+    if not _is_valid_json(scene_file):
+        print(f"    [error] scene file {scene_file.name} is malformed, delete it and re-run step 3")
+        return {}
     with open(scene_file, encoding="utf-8") as f:
         scene = json.load(f)
 

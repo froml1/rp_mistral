@@ -11,6 +11,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
 
+
+def _is_valid_json(path: Path) -> bool:
+    try:
+        json.loads(path.read_text(encoding="utf-8"))
+        return True
+    except Exception:
+        return False
+
 _PROMPT = """\
 Analyze the CHARACTERS in this RP scene.
 IMPORTANT: authors (Discord users who write the scene) are NOT characters. Authors to ignore: {authors}
@@ -101,10 +109,15 @@ def _scene_text(messages: list[dict]) -> str:
 
 def run_who(scene_file: Path, analysis_dir: Path, chars_dir: Path) -> dict:
     out_path = analysis_dir / "who.json"
-    if out_path.exists():
+    if out_path.exists() and _is_valid_json(out_path):
         print(f"    [skip] who already done")
         return json.loads(out_path.read_text(encoding="utf-8"))
+    if out_path.exists():
+        print(f"    [corrupt] who.json malformed, re-analyzing...")
 
+    if not _is_valid_json(scene_file):
+        print(f"    [error] scene file {scene_file.name} is malformed, delete it and re-run step 3")
+        return {}
     with open(scene_file, encoding="utf-8") as f:
         scene = json.load(f)
 

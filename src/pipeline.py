@@ -82,11 +82,11 @@ def run_pipeline(
 
     if should_run(2):
         print("\n== STEP 2 - TRANSLATE ==")
-        run_translate(PURGED_DIR, TRANSLATED_DIR)
+        run_translate(PURGED_DIR, TRANSLATED_DIR, exports_dir=Path(exports_dir))
 
     if should_run(3):
         print("\n== STEP 3 - SUBDIVIDE ==")
-        run_subdivide(TRANSLATED_DIR, SCENES_DIR)
+        run_subdivide(TRANSLATED_DIR, SCENES_DIR, purged_dir=PURGED_DIR)
 
     if should_run(4):
         print("\n== STEP 4 - ANALYZE ==")
