@@ -1,261 +1,237 @@
 """
-Gradio interface — user entry point.
-Usage: python src/interface.py
-
-Two modes:
-  Q&A    — questions routed through the RAG pipeline
-  Lore   — affirmations extracted by Mistral and merged into lore.yaml
+Gradio interface — query + pipeline control.
+Usage: .venv/bin/python src/interface.py
 """
 
-import yaml
+import json
+import subprocess
+import sys
+import threading
 from pathlib import Path
 
 import gradio as gr
-from rag_pipeline import build_query_engine, interroger
-from lore_extractor import merge_into_lore, _call_mistral, LORE_PATH
+import yaml
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+from query import answer, load_all_lore
+
+DATA_DIR    = Path("data")
+LORE_DIR    = DATA_DIR / "lore"
+ANALYSIS_DIR = DATA_DIR / "analysis"
+PYTHON      = str(Path(__file__).parent.parent / ".venv" / "bin" / "python")
+
+# ── Pipeline ──────────────────────────────────────────────────────────────────
+
+_pipeline_log = []
+_pipeline_running = False
 
 
-query_engine = None
+def _run_pipeline(from_step, only_step, scene_id, exports_dir):
+    global _pipeline_running
+    _pipeline_running = True
+    _pipeline_log.clear()
 
+    cmd = [PYTHON, "src/pipeline.py"]
+    if exports_dir.strip():
+        cmd.append(exports_dir.strip())
+    if only_step:
+        cmd += ["--only-step", str(only_step)]
+    elif from_step > 1:
+        cmd += ["--from-step", str(from_step)]
+    if scene_id.strip():
+        cmd += ["--scene", scene_id.strip()]
 
-# ── RAG mode ──────────────────────────────────────────────────────────────────
-
-def initialiser():
-    global query_engine
     try:
-        query_engine = build_query_engine()
-        return "Moteur RAG initialisé. Prêt à répondre."
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            cwd=str(Path(__file__).parent.parent),
+        )
+        for line in proc.stdout:
+            _pipeline_log.append(line.rstrip())
+        proc.wait()
+        _pipeline_log.append(f"\n[exit code {proc.returncode}]")
     except Exception as e:
-        return f"Erreur d'initialisation : {e}"
+        _pipeline_log.append(f"[error] {e}")
+    finally:
+        _pipeline_running = False
 
 
-def repondre(question: str, historique: list):
+def start_pipeline(from_step, only_step_str, scene_id, exports_dir):
+    if _pipeline_running:
+        return "Pipeline already running…"
+    only_step = int(only_step_str) if only_step_str else None
+    t = threading.Thread(
+        target=_run_pipeline,
+        args=(from_step, only_step, scene_id, exports_dir),
+        daemon=True,
+    )
+    t.start()
+    return "Pipeline started…"
+
+
+def get_pipeline_log():
+    return "\n".join(_pipeline_log[-200:])
+
+
+# ── Lore stats ────────────────────────────────────────────────────────────────
+
+def lore_stats() -> str:
+    lore = load_all_lore()
+    lines = []
+    for cat in ("characters", "places", "concepts"):
+        entities = lore[cat]
+        if entities:
+            names = ", ".join(e.get("name", e.get("_file", "?")) for e in entities[:12])
+            suffix = f"… +{len(entities)-12}" if len(entities) > 12 else ""
+            lines.append(f"**{cat}** ({len(entities)}): {names}{suffix}")
+        else:
+            lines.append(f"**{cat}**: —")
+
+    how_ctx = lore.get("how_context") or {}
+    lines.append(f"**scenes indexed**: {len(how_ctx)}")
+
+    scene_dirs = list(ANALYSIS_DIR.glob("*/what.json")) if ANALYSIS_DIR.exists() else []
+    lines.append(f"**scenes analyzed**: {len(scene_dirs)}")
+
+    return "\n".join(lines) if lines else "No lore found. Run the pipeline first."
+
+
+# ── Lore browser ─────────────────────────────────────────────────────────────
+
+def list_entities(category: str) -> list[str]:
+    path = LORE_DIR / category
+    if not path.exists():
+        return []
+    return sorted(f.stem for f in path.glob("*.yaml"))
+
+
+def show_entity(category: str, slug: str) -> str:
+    if not slug:
+        return ""
+    path = LORE_DIR / category / f"{slug}.yaml"
+    if not path.exists():
+        return "Not found."
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    data.pop("_file", None)
+    return yaml.dump(data, allow_unicode=True, sort_keys=False)
+
+
+def refresh_entity_list(category: str):
+    items = list_entities(category)
+    return gr.Dropdown(choices=items, value=None)
+
+
+# ── Chat ──────────────────────────────────────────────────────────────────────
+
+def chat(question: str, history: list):
     if not question.strip():
-        return historique, "", ""
-
-    if query_engine is None:
-        return historique, "Le moteur n'est pas encore initialisé.", ""
-
+        return history, ""
+    history = history or []
+    history.append({"role": "user", "content": question})
     try:
-        reponse, sources = interroger(question, query_engine)
+        response = answer(question)
     except Exception as e:
-        return historique, f"Erreur : {e}", ""
-
-    historique.append({"role": "user", "content": question})
-    historique.append({"role": "assistant", "content": reponse})
-
-    lignes_sources = []
-    for s in sources:
-        chars = ", ".join(s.get("characters") or []) or "?"
-        tags = ", ".join(s.get("scene_tags") or []) or "—"
-        lignes_sources.append(
-            f"• [{s.get('arc','?')}] {s.get('channel','?')} — {str(s.get('start','?'))[:10]}"
-            f" | personnages: {chars}"
-            f" | tags: {tags}"
-            f" | score: {s.get('score','?')}"
-        )
-    sources_texte = "\n".join(lignes_sources) if lignes_sources else "Aucune source trouvée."
-
-    return historique, "", sources_texte
-
-
-# ── Lore ingestion mode ───────────────────────────────────────────────────────
-
-LORE_EXTRACTION_SYSTEM = (
-    "Tu es un extracteur de lore pour jeux de rôle. "
-    "L'utilisateur te donne une affirmation sur l'univers. "
-    "Tu retournes UNIQUEMENT du JSON valide extrayant les entités et relations mentionnées."
-)
-
-LORE_EXTRACTION_PROMPT = """\
-L'utilisateur a fourni cette information sur l'univers :
-\"{statement}\"
-
-Extrais les entités et relations dans ce JSON (laisse {{}} ou [] si vide) :
-
-{{
-  "characters": {{"Nom": {{"aliases": [], "description": ""}}}},
-  "places": {{"Nom": {{"description": ""}}}},
-  "events": {{"id": {{"label": "", "description": "", "timestamp": null, "state": "fut"}}}},
-  "objects": {{"Nom": {{"description": ""}}}},
-  "cultures": {{"Nom": {{"description": ""}}}},
-  "intentions": {{}},
-  "narrative_axes": {{}},
-  "character_knowledge": {{}},
-  "universe_rules": [],
-  "relations": [
-    {{
-      "from": "", "from_type": "character|place|event|object|culture",
-      "rel": "type", "to": "", "to_type": "character|place|event|object|culture",
-      "state": "est", "confidence": "high"
-    }}
-  ]
-}}"""
-
-
-def _diff_summary(extracted: dict, added: int) -> str:
-    """Builds a human-readable summary of what was extracted and added."""
-    lines = []
-    for section in ("characters", "places", "events", "objects", "cultures",
-                    "intentions", "narrative_axes"):
-        items = list((extracted.get(section) or {}).keys())
-        if items:
-            lines.append(f"  {section} : {', '.join(items)}")
-    rules = extracted.get("universe_rules") or []
-    if rules:
-        lines.append(f"  règles : {len(rules)} entrée(s)")
-    rels = extracted.get("relations") or []
-    if rels:
-        rel_strs = [f"{r.get('from')} —{r.get('rel')}→ {r.get('to')}" for r in rels[:5]]
-        lines.append(f"  relations : {', '.join(rel_strs)}")
-    ck = extracted.get("character_knowledge") or {}
-    if ck:
-        lines.append(f"  connaissances : {', '.join(ck.keys())}")
-
-    if not lines:
-        return "Rien d'extractible dans cet énoncé."
-
-    status = f"✓ {added} élément(s) nouveau(x) ajouté(s) à lore.yaml" if added > 0 \
-        else "⚠ Déjà connu — aucun ajout (entrées existantes non écrasées)"
-    return status + "\n\nExtrait :\n" + "\n".join(lines)
-
-
-def ajouter_au_lore(affirmation: str, historique: list):
-    if not affirmation.strip():
-        return historique, "", "Aucune affirmation fournie."
-
-    historique.append({"role": "user", "content": f"[LORE] {affirmation}"})
-
-    try:
-        prompt = LORE_EXTRACTION_SYSTEM + "\n\n" + \
-                 LORE_EXTRACTION_PROMPT.format(statement=affirmation)
-
-        # Reuse _call_mistral via a small override
-        import requests, json as _json
-        from lore_extractor import OLLAMA_URL, LLM_MODEL
-        resp = requests.post(
-            OLLAMA_URL,
-            json={"model": LLM_MODEL, "prompt": prompt, "format": "json", "stream": False, "options": {
-            "temperature": 0,
-            "top_k": 1,
-            "num_predict": 250,
-            "num_ctx": 4096
-        }},
-            timeout=60,
-        )
-        resp.raise_for_status()
-        extracted = _json.loads(resp.json().get("response", "{}"))
-        added = merge_into_lore(extracted, source=f"interface:{affirmation[:60]}")
-        summary = _diff_summary(extracted, added)
-
-    except Exception as e:
-        summary = f"Erreur : {e}"
-        extracted = {}
-
-    historique.append({"role": "assistant", "content": summary})
-    return historique, "", summary
-
-
-def lire_lore_resume() -> str:
-    """Returns a short human-readable snapshot of the current lore."""
-    if not LORE_PATH.exists():
-        return "lore.yaml vide ou absent."
-    with open(LORE_PATH, encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-
-    lines = []
-    for section in ("characters", "places", "events", "objects",
-                    "cultures", "intentions", "narrative_axes"):
-        nodes = data.get(section) or {}
-        if nodes:
-            lines.append(f"{section} ({len(nodes)}) : {', '.join(list(nodes.keys())[:8])}")
-    rules = data.get("universe_rules") or []
-    if rules:
-        lines.append(f"universe_rules ({len(rules)})")
-    rels = data.get("relations") or []
-    if rels:
-        lines.append(f"relations ({len(rels)})")
-    ck = data.get("character_knowledge") or {}
-    if ck:
-        lines.append(f"character_knowledge : {', '.join(ck.keys())}")
-
-    return "\n".join(lines) if lines else "Lore vide."
+        response = f"Error: {e}"
+    history.append({"role": "assistant", "content": response})
+    return history, ""
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
 
-with gr.Blocks(title="IA Roleplay Discord", theme=gr.themes.Soft()) as app:
-    gr.Markdown("# IA Analyse Roleplay Discord")
+with gr.Blocks(title="RP_IA") as app:
+    gr.Markdown("# RP_IA — Roleplay Analysis")
 
-    with gr.Row():
-        # ── Left: chat ──────────────────────────────────────────────────────
-        with gr.Column(scale=3):
-            chatbot = gr.Chatbot(label="Conversation", height=520)
+    with gr.Tabs():
 
-            with gr.Tabs():
-                with gr.Tab("❓ Question"):
-                    with gr.Row():
-                        question_input = gr.Textbox(
-                            placeholder="Quel est le lien entre Garrance et Gaulthier ?",
-                            label="Question sur le RP",
-                            scale=5,
-                        )
-                        envoyer_btn = gr.Button("Envoyer", variant="primary", scale=1)
+        # ── Tab: Query ───────────────────────────────────────────────────────
+        with gr.Tab("Query"):
+            chatbot = gr.Chatbot(label="", height=520)
+            with gr.Row():
+                question_box = gr.Textbox(
+                    placeholder="Ask anything about the RP universe…",
+                    label="Question",
+                    scale=5,
+                )
+                send_btn = gr.Button("Send", variant="primary", scale=1)
 
-                with gr.Tab("📖 Ajouter au lore"):
-                    with gr.Row():
-                        lore_input = gr.Textbox(
-                            placeholder='Ex : "Antoine est le fils de Marc Duverne, un ancien militaire décédé"',
-                            label="Affirmation sur l'univers",
-                            scale=5,
-                        )
-                        lore_btn = gr.Button("Ajouter", variant="primary", scale=1)
+            send_btn.click(chat, [question_box, chatbot], [chatbot, question_box])
+            question_box.submit(chat, [question_box, chatbot], [chatbot, question_box])
 
-        # ── Right: panel ────────────────────────────────────────────────────
-        with gr.Column(scale=1):
-            with gr.Tabs():
-                with gr.Tab("Sources"):
-                    sources_output = gr.Textbox(
-                        label="Scènes consultées", lines=12, interactive=False
-                    )
+        # ── Tab: Pipeline ────────────────────────────────────────────────────
+        with gr.Tab("Pipeline"):
+            with gr.Row():
+                exports_input = gr.Textbox(
+                    value="data/exports",
+                    label="Exports directory",
+                    scale=3,
+                )
+                from_step_slider = gr.Slider(
+                    minimum=1, maximum=4, step=1, value=1,
+                    label="From step",
+                    scale=1,
+                )
+                only_step_input = gr.Textbox(
+                    value="",
+                    label="Only step (blank = all)",
+                    scale=1,
+                )
+                scene_input = gr.Textbox(
+                    value="",
+                    label="Scene ID (optional)",
+                    scale=2,
+                )
 
-                with gr.Tab("Lore actuel"):
-                    lore_snapshot = gr.Textbox(
-                        label="État du lore.yaml", lines=12, interactive=False
-                    )
-                    refresh_btn = gr.Button("Rafraîchir", size="sm")
+            with gr.Row():
+                run_btn  = gr.Button("Run Pipeline", variant="primary")
+                status   = gr.Textbox(label="Status", interactive=False, scale=3)
 
-            init_btn = gr.Button("Initialiser le moteur RAG", variant="secondary")
-            init_status = gr.Textbox(label="Statut", interactive=False, lines=1)
+            log_box = gr.Textbox(
+                label="Log",
+                lines=20,
+                interactive=False,
+                autoscroll=True,
+            )
 
-    # ── Events ──────────────────────────────────────────────────────────────
-    init_btn.click(initialiser, outputs=init_status)
+            run_btn.click(
+                start_pipeline,
+                [from_step_slider, only_step_input, scene_input, exports_input],
+                status,
+            )
 
-    envoyer_btn.click(
-        repondre,
-        inputs=[question_input, chatbot],
-        outputs=[chatbot, question_input, sources_output],
-    )
-    question_input.submit(
-        repondre,
-        inputs=[question_input, chatbot],
-        outputs=[chatbot, question_input, sources_output],
-    )
+            refresh_log_btn = gr.Button("Refresh log", size="sm")
+            refresh_log_btn.click(get_pipeline_log, outputs=log_box)
 
-    lore_btn.click(
-        ajouter_au_lore,
-        inputs=[lore_input, chatbot],
-        outputs=[chatbot, lore_input, sources_output],
-    )
-    lore_input.submit(
-        ajouter_au_lore,
-        inputs=[lore_input, chatbot],
-        outputs=[chatbot, lore_input, sources_output],
-    )
+        # ── Tab: Lore ────────────────────────────────────────────────────────
+        with gr.Tab("Lore"):
+            stats_box = gr.Markdown(lore_stats())
+            refresh_stats_btn = gr.Button("Refresh", size="sm")
 
-    refresh_btn.click(lire_lore_resume, outputs=lore_snapshot)
-    app.load(lire_lore_resume, outputs=lore_snapshot)
+            gr.Markdown("---")
+
+            with gr.Row():
+                cat_radio = gr.Radio(
+                    ["characters", "places", "concepts"],
+                    value="characters",
+                    label="Category",
+                )
+                entity_dd = gr.Dropdown(
+                    choices=list_entities("characters"),
+                    label="Entity",
+                    scale=2,
+                )
+                refresh_list_btn = gr.Button("Refresh list", size="sm", scale=1)
+
+            entity_view = gr.Code(label="YAML", language="yaml", lines=25)
+
+            refresh_stats_btn.click(lore_stats, outputs=stats_box)
+            refresh_list_btn.click(refresh_entity_list, cat_radio, entity_dd)
+            cat_radio.change(refresh_entity_list, cat_radio, entity_dd)
+            entity_dd.change(show_entity, [cat_radio, entity_dd], entity_view)
 
 
 if __name__ == "__main__":
-    app.launch(server_name="0.0.0.0", server_port=7860, share=False)
+    app.launch(server_name="0.0.0.0", server_port=7860, share=False, theme=gr.themes.Soft())
