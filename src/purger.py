@@ -1,32 +1,112 @@
 """
 RP/HRP separator — pre-processing pass before indexing.
 
-Reads raw Discord exports from data/exports/
-Writes filtered exports (RP only) to data/exports_filtered/
+Reads raw Discord exports, writes filtered exports (RP only).
 
-Algorithme bloc :
-  - Un bloc RP démarre obligatoirement par un message contenant '*'
-  - Le bloc se termine sur un gap > 1h ou un délimiteur de scène (---, ___, ***)
-  - Dans un bloc : tout message non-preflight-HRP est conservé
-  - Hors bloc : tout message sans '*' est ignoré
-
-Usage:
-  python src/purger.py [data/exports/]
+Algorithm:
+  - A RP block opens on a message with *asterisks* confirmed by LLM
+  - Block ends on gap > 1h
+  - Within block: all non-trivial-HRP messages are kept
+  - Gap > 30min within block: new scene tag, block stays active
 """
 
+import csv
 import json
+import re
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
-from analyzer import is_preflight_hrp, is_preflight_rp, classify_opener, _parse_ts
-from preprocessing import load_messages
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from llm import call_llm_json
+
+_SCENE_BREAK  = re.compile(r'^[\-_*=~]{3,}\s*$')
+_PARENS       = re.compile(r'[()]')
+_NARRATIVE    = re.compile(r'[a-zA-ZÀ-ÿ]{3,}')
+_STAR_CONTENT = re.compile(r'\*([^*]+)\*')
+_MENTION      = re.compile(r'<@!?\d+>')
+_EMOJI_CUSTOM = re.compile(r'<:\w+:\d+>')
+_URL          = re.compile(r'https?://\S+')
+
+_BLOCK_END_SECS   = 3600
+_SCENE_BREAK_SECS = 1800
+
+_OPENER_PROMPT = """\
+Is this message a literary RP scene opener?
+A scene opener: narrative action between *asterisks*, descriptive style, can open a scene autonomously.
+Answer JSON only.
+
+Message: {content}
+
+JSON: {{"is_opener": true}}"""
 
 
-OUTPUT_DIR        = Path("data/exports_filtered")
-_BLOCK_END_SECS   = 3600  # gap > 1h   → fin de bloc, attend un nouvel opener
-_SCENE_BREAK_SECS = 1800  # gap > 30min → nouvelle scène, bloc reste actif
+def _parse_ts(ts: str) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _clean(text: str) -> str:
+    text = _MENTION.sub("", text)
+    text = _EMOJI_CUSTOM.sub("", text)
+    text = _URL.sub("", text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def is_preflight_hrp(content: str) -> bool:
+    s = content.strip()
+    if not s or _SCENE_BREAK.match(s):
+        return True
+    if _PARENS.search(s):
+        return True
+    if not _NARRATIVE.search(s):
+        return True
+    return False
+
+
+def is_preflight_rp(content: str) -> bool:
+    s = content.strip()
+    if _PARENS.search(s):
+        return False
+    matches = _STAR_CONTENT.findall(s)
+    return any(len(m.split()) > 3 for m in matches)
+
+
+def classify_opener(content: str) -> bool:
+    cleaned = _clean(content)
+    result = call_llm_json(
+        _OPENER_PROMPT.format(content=cleaned),
+        num_predict=16,
+        num_ctx=512,
+    )
+    return bool(result.get("is_opener", False))
+
+
+def load_messages(filepath: Path) -> list[dict]:
+    if filepath.suffix.lower() == ".csv":
+        messages = []
+        with open(filepath, encoding="utf-8-sig", newline="") as f:
+            sample = f.read(4096)
+            f.seek(0)
+            try:
+                delimiter = csv.Sniffer().sniff(sample, delimiters=",;\t|").delimiter
+            except csv.Error:
+                delimiter = ","
+            for row in csv.DictReader(f, delimiter=delimiter):
+                author  = (row.get("author") or row.get("Author") or "").strip()
+                content = (row.get("content") or row.get("Content") or "").strip()
+                ts      = (row.get("timestamp") or row.get("Timestamp") or "").strip()
+                if content:
+                    messages.append({"author": {"name": author}, "content": content, "timestamp": ts})
+        return messages
+    with open(filepath, encoding="utf-8") as f:
+        data = json.load(f)
+    return data.get("messages", data) if isinstance(data, dict) else data
 
 
 def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
@@ -38,12 +118,11 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
     raw_messages.sort(key=lambda m: _parse_ts(m.get("timestamp", "")) or datetime.min)
     total = len(raw_messages)
 
-    block_active   = False
-    last_ts        = None
-    scene_id       = 0
-    kept           = 0
-    first          = True
-    prev_context: list[str] = []   # derniers contenus de la scène active (pour classify_opener)
+    block_active = False
+    last_ts      = None
+    scene_id     = 0
+    kept         = 0
+    first        = True
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write('{"messages": [')
@@ -52,45 +131,36 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
             content = msg.get("content", "").strip()
             ts      = _parse_ts(msg.get("timestamp", ""))
 
-            # ── gestion des gaps ──────────────────────────────────────────
+            # gap handling
             if last_ts and ts:
                 gap = (ts - last_ts).total_seconds()
-                if gap > 60:  # n'affiche que les gaps significatifs
+                if verbose and gap > 60:
                     mins = int(gap // 60)
-                    if verbose:
-                        print(f"\n  [gap {mins}min] {'bloc actif' if block_active else 'hors bloc'} | scène {scene_id} | {ts.strftime('%Y-%m-%d %H:%M')}")
+                    print(f"\n  [gap {mins}min] {'bloc actif' if block_active else 'hors bloc'} | scène {scene_id} | {ts.strftime('%Y-%m-%d %H:%M')}")
                 if block_active:
                     if gap > _BLOCK_END_SECS:
                         block_active = False
-                        prev_context = []
                         if verbose:
                             print(f"  → fin de bloc (gap {int(gap//60)}min > 60min)")
                     elif gap > _SCENE_BREAK_SECS:
                         scene_id += 1
                         if verbose:
-                            print(f"  → nouvelle scène {scene_id} (gap {int(gap//60)}min > 30min, bloc reste actif)")
-
+                            print(f"  → nouvelle scène {scene_id} (gap {int(gap//60)}min > 30min)")
             if ts:
                 last_ts = ts
 
-            # ── preflight HRP : toujours éliminé (parens, smileys…) ───────
             if is_preflight_hrp(content):
                 continue
 
-            # ── hors bloc : '*' + Mistral valide ouverture ────────────────
             if not block_active:
                 if is_preflight_rp(content):
                     if verbose:
                         print(f"  [preflight ok] {content[:60]}")
-                    is_opener, _ = classify_opener(content, prev_context or None)
-                    if verbose:
-                        print(f"  [classify_opener] is_opener={is_opener}")
-                    if is_opener:
+                    if classify_opener(content):
                         block_active = True
                         scene_id += 1
-                        prev_context = []
                         if verbose:
-                            print(f"  ↳ BLOC OUVERT — scène {scene_id} | {ts.strftime('%Y-%m-%d %H:%M') if ts else '?'} : {content[:55]}")
+                            print(f"  ↳ BLOC OUVERT — scène {scene_id} | {ts.strftime('%Y-%m-%d %H:%M') if ts else '?'}")
                     else:
                         if verbose:
                             print(f"  [rejeté] {content[:60]}")
@@ -98,59 +168,31 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
                 else:
                     continue
 
-            # ── dans le bloc : écriture avec tag scène ────────────────────
             f.write(("" if first else ",") + "\n  ")
             json.dump({**msg, "_scene": scene_id}, f, ensure_ascii=False)
             first = False
             kept += 1
-            prev_context.append(content)
-            if len(prev_context) > 10:
-                prev_context.pop(0)
 
             if verbose and (i + 1) % 10 == 0:
                 pct = (i + 1) * 100 // total
-                print(f"  {filepath.name}: {i+1}/{total} ({pct}%) — {kept} RP  [{scene_id} scènes]", end="\r")
+                print(f"  {filepath.name}: {i+1}/{total} ({pct}%) — {kept} RP [{scene_id} scènes]", end="\r")
 
         f.write("\n]}")
-        f.flush()
 
     if verbose:
-        print(f"  {filepath.name}: {total} → {kept} RP, {total - kept} HRP      ")
+        print(f"  {filepath.name}: {total} → {kept} RP, {total - kept} HRP")
 
     return kept
 
 
-def purge_all(exports_dir: str = "data/exports"):
-    input_path = Path(exports_dir)
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    if input_path.is_file():
-        files = [input_path]
-    else:
-        files = list(input_path.glob("**/*.json")) + list(input_path.glob("**/*.csv"))
-
-    if not files:
-        print(f"No export files (.json / .csv) found in {exports_dir}")
-        return
-
-    print(f"Purging {len(files)} file(s) → {OUTPUT_DIR}/")
-    with ThreadPoolExecutor() as pool:
-        futures = {
-            pool.submit(purge_export, fp, OUTPUT_DIR / (fp.stem + ".json"), False): fp
-            for fp in files
-        }
-        for fut in as_completed(futures):
-            fp = futures[fut]
-            try:
-                kept = fut.result()
-                print(f"  {fp.name}: {kept} RP gardés")
-            except Exception as exc:
-                print(f"  {fp.name}: ERREUR — {exc}")
-
-    print(f"Done. Filtered exports in {OUTPUT_DIR}/")
-    print(f"  python src/indexer.py {OUTPUT_DIR}/")
-
-
 if __name__ == "__main__":
     exports_dir = next((a for a in sys.argv[1:] if not a.startswith("--")), "data/exports")
-    purge_all(exports_dir)
+    input_path  = Path(exports_dir)
+    out_dir     = Path(__file__).resolve().parent.parent / "data" / "purged"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    files = [input_path] if input_path.is_file() else (
+        list(input_path.glob("**/*.json")) + list(input_path.glob("**/*.csv"))
+    )
+    for fp in files:
+        purge_export(fp, out_dir / (fp.stem + ".json"), verbose=True)
