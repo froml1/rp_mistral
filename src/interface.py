@@ -21,7 +21,7 @@ from query import answer, load_all_lore
 DATA_DIR     = ROOT / "data"
 LORE_DIR     = DATA_DIR / "lore"
 ANALYSIS_DIR = DATA_DIR / "analysis"
-PYTHON       = str(ROOT / ".venv" / "bin" / "python")
+PYTHON       = sys.executable
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 
