@@ -34,6 +34,10 @@ from steps.analyze_who   import run_who
 from steps.analyze_which import run_which
 from steps.analyze_what  import run_what
 from steps.analyze_how   import run_how
+from steps.general_lore  import (
+    update_general_who, update_general_where, update_general_which,
+    update_general_what, update_general_how,
+)
 
 DATA_DIR     = ROOT / "data"
 EXPORTS_DIR  = DATA_DIR / "exports"
@@ -62,7 +66,14 @@ def run_step4(scene_files: list[Path], only_scene: str | None = None):
         who   = run_who(scene_file, ad, chars_dir)
         which = run_which(scene_file, ad, concepts_dir)
         what  = run_what(scene_file, ad, when, where, who, which)
-        run_how(scene_file, ad, when, where, who, which, what)
+        how   = run_how(scene_file, ad, when, where, who, which, what)
+
+        # Update general syntheses — re-injected as context for the next scenes
+        update_general_who(chars_dir, LORE_DIR)
+        update_general_where(places_dir, LORE_DIR)
+        update_general_which(concepts_dir, LORE_DIR)
+        update_general_what(LORE_DIR, scene_id, what)
+        update_general_how(LORE_DIR, scene_id, how)
 
 
 def run_pipeline(
