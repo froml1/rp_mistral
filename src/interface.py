@@ -28,6 +28,7 @@ PYTHON       = sys.executable
 _pipeline_log: list[str] = []
 _pipeline_proc: subprocess.Popen | None = None
 _pipeline_running = False
+_pipeline_exit_code: int | None = None
 
 
 def _resolve_exports(exports_dir: str) -> str:
@@ -38,8 +39,9 @@ def _resolve_exports(exports_dir: str) -> str:
 
 
 def _run_pipeline(from_step, only_step, scene_id, exports_dir):
-    global _pipeline_running, _pipeline_proc
+    global _pipeline_running, _pipeline_proc, _pipeline_exit_code
     _pipeline_running = True
+    _pipeline_exit_code = None
     _pipeline_log.clear()
 
     cmd = [PYTHON, str(SRC_DIR / "pipeline.py"), _resolve_exports(exports_dir)]
@@ -68,6 +70,7 @@ def _run_pipeline(from_step, only_step, scene_id, exports_dir):
         for line in _pipeline_proc.stdout:
             _pipeline_log.append(line.rstrip())
         _pipeline_proc.wait()
+        _pipeline_exit_code = _pipeline_proc.returncode
         _pipeline_log.append(f"\n[exit code {_pipeline_proc.returncode}]")
     except Exception as e:
         _pipeline_log.append(f"[error] {e}")
@@ -77,15 +80,23 @@ def _run_pipeline(from_step, only_step, scene_id, exports_dir):
 
 
 def start_pipeline(from_step, only_step_str, scene_id, exports_dir):
+    import time
     if _pipeline_running:
-        return "Pipeline already running…"
+        yield "Pipeline already running…", get_pipeline_log()
+        return
     only_step = int(only_step_str) if only_step_str.strip() else None
     threading.Thread(
         target=_run_pipeline,
         args=(from_step, only_step, scene_id, exports_dir),
         daemon=True,
     ).start()
-    return "Pipeline started…"
+    time.sleep(0.2)
+    while _pipeline_running:
+        yield "Running…", "\n".join(_pipeline_log[-300:])
+        time.sleep(0.5)
+    code = _pipeline_exit_code
+    status = f"Done ✓ (exit {code})" if code == 0 else f"Error ✗ (exit {code})"
+    yield status, "\n".join(_pipeline_log[-300:])
 
 
 def stop_pipeline():
@@ -224,12 +235,9 @@ with gr.Blocks(title="RP_IA") as app:
             run_btn.click(
                 start_pipeline,
                 [from_step_slider, only_step_input, scene_input, exports_input],
-                status,
+                [status, log_box],
             )
             stop_btn.click(stop_pipeline, outputs=status)
-
-            refresh_log_btn = gr.Button("Refresh log", size="sm")
-            refresh_log_btn.click(get_pipeline_log, outputs=log_box)
 
         # ── Tab: Lore ────────────────────────────────────────────────────────
         with gr.Tab("Lore"):
