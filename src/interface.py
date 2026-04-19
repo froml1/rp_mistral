@@ -50,12 +50,17 @@ def _run_pipeline(from_step, only_step, scene_id, exports_dir):
     if scene_id.strip():
         cmd += ["--scene", scene_id.strip()]
 
+    _pipeline_log.append(f"[cmd] {' '.join(cmd)}")
+    _pipeline_log.append(f"[python exists] {Path(PYTHON).exists()}")
+    _pipeline_log.append(f"[pipeline exists] {(SRC_DIR / 'pipeline.py').exists()}")
+
     try:
         _pipeline_proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            cwd=str(ROOT),
         )
         for line in _pipeline_proc.stdout:
             _pipeline_log.append(line.rstrip())
