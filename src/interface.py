@@ -60,6 +60,7 @@ def _run_pipeline(from_step, only_step, scene_id, exports_dir):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
             cwd=str(ROOT),
         )
         for line in _pipeline_proc.stdout:

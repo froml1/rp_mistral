@@ -77,19 +77,19 @@ def run_pipeline(
         return step >= from_step
 
     if should_run(1):
-        print("\n══ STEP 1 — PURGE ══")
+        print("\n== STEP 1 — PURGE ==")
         run_purge(Path(exports_dir), PURGED_DIR)
 
     if should_run(2):
-        print("\n══ STEP 2 — TRANSLATE ══")
+        print("\n== STEP 2 — TRANSLATE ==")
         run_translate(PURGED_DIR, TRANSLATED_DIR)
 
     if should_run(3):
-        print("\n══ STEP 3 — SUBDIVIDE ══")
+        print("\n== STEP 3 — SUBDIVIDE ==")
         run_subdivide(TRANSLATED_DIR, SCENES_DIR)
 
     if should_run(4):
-        print("\n══ STEP 4 — ANALYZE ══")
+        print("\n== STEP 4 — ANALYZE ==")
         scene_files = sorted(SCENES_DIR.glob("**/*.json"))
         if not scene_files:
             print("  No scene files found. Run step 3 first.")
@@ -97,7 +97,7 @@ def run_pipeline(
         print(f"  {len(scene_files)} scenes to analyze")
         run_step4(scene_files, only_scene=only_scene)
 
-    print("\n══ PIPELINE DONE ══")
+    print("\n== PIPELINE DONE ==")
 
 
 if __name__ == "__main__":
