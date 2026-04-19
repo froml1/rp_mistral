@@ -1,4 +1,4 @@
-# Notes de déploiement — IA Roleplay Discord
+# Déploiement — RP_IA
 
 ## Prérequis machine
 
@@ -6,235 +6,124 @@
 |---|---|---|
 | RAM | 8 Go | 16 Go |
 | Stockage | 10 Go libres | 20 Go |
-| OS | Linux / macOS / Windows | Linux ou macOS |
-| Python | 3.10+ | 3.11+ |
+| OS | Linux / macOS / Windows | Linux |
+| Python | 3.11+ | 3.12 |
 | GPU | Non requis | Non requis (CPU suffit) |
 
 ---
 
 ## Étape 1 — Installer Ollama
 
-Ollama fait tourner Mistral en local.
-
-**Linux / macOS**
 ```bash
+# Linux / macOS
 curl -fsSL https://ollama.com/install.sh | sh
-```
 
-**Windows**
-Télécharger et exécuter l'installeur depuis : https://ollama.com/download
-
-**Vérifier que ça tourne**
-```bash
-ollama --version
-```
-
-> Si vous obtenez `address already in use` au démarrage, Ollama tourne déjà en arrière-plan — c'est normal, passez à la suite.
-
-Puis télécharger les deux modèles nécessaires :
-
-```bash
-# Le LLM principal (génération de réponses) — ~4 Go
+# Télécharger le modèle (~4 Go, une seule fois)
 ollama pull mistral
-
-# Le modèle d'embedding (transformation en vecteurs) — ~300 Mo
-ollama pull nomic-embed-text
 ```
 
-> Ces téléchargements se font une seule fois. Ensuite tout tourne hors-ligne.
+Windows : télécharger l'installeur depuis https://ollama.com/download
+
+> Si `address already in use` : Ollama tourne déjà, passez à la suite.
 
 ---
 
-## Étape 2 — Installer les dépendances Python
+## Étape 2 — Préparer l'environnement Python
 
-Prérequis : Python 3.11+ installé.
-- Linux/macOS : généralement déjà présent (`python3 --version`)
-- Windows : télécharger depuis python.org — cocher **"Add to PATH"** à l'installation
-
-**Linux / macOS**
 ```bash
 cd /chemin/vers/RP_IA
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate        # Windows : .venv\Scripts\activate
 pip install -r requirements.txt
 ```
-
-**Windows** (PowerShell)
-```powershell
-cd C:\chemin\vers\RP_IA
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-> **Windows — erreur de politique d'exécution** sur l'activation du venv :
-> ```powershell
-> Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-> ```
-> Puis relancer `.venv\Scripts\activate`.
 
 ---
 
-## Étape 3 — Préparer les exports Discord
+## Étape 3 — Placer les exports Discord
 
-Utiliser [DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter) pour exporter vos salons.
+Exporter vos salons avec [DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter) au format **JSON**.
 
-- Format d'export : **JSON**
-- Placer les fichiers `.json` dans : `data/exports/`
+Déposer les fichiers dans :
+```
+data/exports/
+  arc-1-prologue.json
+  arc-2-traversee.json
+  ...
+```
 
-Structure attendue :
+C'est le **seul dossier à remplir manuellement**.
+
+---
+
+## Étape 4 — Lancer la pipeline
+
+```bash
+# Pipeline complète (étapes 1 → 4)
+.venv/bin/python src/pipeline.py
+
+# Reprendre à partir d'une étape
+.venv/bin/python src/pipeline.py --from-step 3
+
+# Une seule étape
+.venv/bin/python src/pipeline.py --only-step 4
+
+# Retraiter une scène spécifique (étape 4)
+.venv/bin/python src/pipeline.py --only-step 4 --scene nom_scene_000
+```
+
+### Ce que fait chaque étape
+
+| Étape | Nom | Entrée | Sortie |
+|---|---|---|---|
+| 1 | Purge | `data/exports/` | `data/purged/` |
+| 2 | Translate | `data/purged/` | `data/translated/` |
+| 3 | Subdivide | `data/translated/` | `data/scenes/` |
+| 4 | Analyze | `data/scenes/` | `data/analysis/` + `data/lore/` |
+
+La pipeline est **idempotente** : elle saute les fichiers déjà traités. Ajouter de nouveaux exports et relancer ne retraite que le nouveau contenu.
+
+---
+
+## Étape 5 — Lancer l'interface
+
+```bash
+.venv/bin/python src/interface.py
+```
+
+Ouvrir : **http://localhost:7860**
+
+### Onglets disponibles
+
+| Onglet | Usage |
+|---|---|
+| **Query** | Poser des questions sur l'univers RP |
+| **Pipeline** | Démarrer / surveiller la pipeline sans terminal |
+| **Lore** | Parcourir les fiches personnages, lieux, concepts |
+
+---
+
+## Structure des données produites
+
 ```
 data/
-  exports/
-    arc-1-prologue.json
-    arc-2-la-traversee.json
-    arc-3-la-forteresse.json
+├── exports/              ← VOS FICHIERS JSON (à déposer ici)
+├── purged/               ← messages RP filtrés
+├── translated/           ← messages traduits en anglais
+├── scenes/               ← scènes découpées
+├── analysis/
+│   └── {scene_id}/
+│       ├── when.json     ← contexte temporel
+│       ├── where.json    ← lieux
+│       ├── who.json      ← personnages
+│       ├── which.json    ← concepts/factions/objets
+│       ├── what.json     ← événements
+│       └── how.json      ← liens causaux
+└── lore/
+    ├── characters/       ← une fiche YAML par personnage
+    ├── places/           ← une fiche YAML par lieu
+    ├── concepts/         ← une fiche YAML par concept
+    └── how_context.yaml  ← synthèse narrative cumulée
 ```
-
----
-
-## Étape 3b — Purge RP/HRP (recommandé)
-
-Les exports Discord contiennent souvent des conversations informelles mélangées aux scènes RP.
-Cette étape filtre le contenu non-RP avant l'indexation.
-
-**Signaux détectés automatiquement :**
-- Séparateurs de scène : `---` / `___` / `***` → délimitent les blocs RP
-- HRP heuristique : emojis excessifs, liens, langage informel
-- HRP dans la scène : `((...))` déjà géré plus tard par le pipeline
-- Long délai temporel entre messages → possible fin de scène
-
-**Linux / macOS**
-```bash
-# Purge heuristique seule (rapide)
-python3 src/purger.py data/exports/
-
-# Avec Mistral pour les cas ambigus (plus précis, plus lent)
-python3 src/purger.py data/exports/ --with-llm
-```
-
-**Windows**
-```powershell
-python src\purger.py data\exports\
-python src\purger.py data\exports\ --with-llm
-```
-
-Les exports filtrés sont écrits dans `data/exports_filtered/`.
-**Les étapes suivantes utilisent ce dossier filtré à la place de `data/exports/`.**
-
----
-
-## Étape 4 — Phase 0 : bootstrap des personnages
-
-**Linux / macOS**
-```bash
-python3 src/bootstrap.py data/exports/
-```
-
-**Windows**
-```powershell
-python src\bootstrap.py data\exports\
-```
-
-Cela génère `config/personnages_draft.yaml` et `config/lore_draft.yaml`.
-
-Ouvrir ces fichiers, vérifier les détections, corriger si besoin :
-- Fusionner les alias d'un même personnage
-- Supprimer les faux positifs (noms détectés par erreur)
-- Compléter les PNJ et les noms d'arcs
-
-Puis copier vers les fichiers de config actifs :
-
-**Linux / macOS**
-```bash
-cp config/personnages_draft.yaml config/personnages.yaml
-```
-
-**Windows**
-```powershell
-copy config\personnages_draft.yaml config\personnages.yaml
-```
-
----
-
-## Étape 5 — Indexation
-
-**Linux / macOS**
-```bash
-# Indexation simple
-python3 src/indexer.py data/exports/
-
-# Avec extraction de lore et tags thématiques (plus lent, nécessite Mistral)
-python3 src/indexer.py data/exports/ --with-lore --with-tags
-```
-
-**Windows**
-```powershell
-python src\indexer.py data\exports\
-# ou
-python src\indexer.py data\exports\ --with-lore --with-tags
-```
-
-Cette étape peut prendre quelques minutes selon le volume de messages.
-Elle stocke les vecteurs dans `data/index/` (persistant sur disque).
-
-> À relancer à chaque ajout de nouveaux exports. Les nouveaux documents
-> s'ajoutent à la base existante sans écraser les anciens.
->
-> En cas d'erreur à la première indexation, vider l'index et recommencer :
-> - Linux/macOS : `rm -rf data/index/*`
-> - Windows : `Remove-Item data\index\* -Recurse`
-
----
-
-## Étape 6 — Lancer l'interface
-
-**Linux / macOS**
-```bash
-python3 src/interface.py
-```
-
-**Windows**
-```powershell
-python src\interface.py
-```
-
-Ouvrir dans le navigateur : **http://localhost:7860**
-
-Cliquer sur **"Initialiser le moteur"** puis poser vos questions.
-
----
-
-## Workflow d'enrichissement (nouveaux exports)
-
-**Linux / macOS**
-```bash
-# 1. Déposer le nouveau fichier JSON dans data/exports/
-# 2. Re-bootstrap si nouveaux personnages
-python3 src/bootstrap.py data/exports/
-# 3. Corriger config/personnages.yaml si besoin
-# 4. Ré-indexer (ajout non destructif)
-python3 src/indexer.py data/exports/
-# 5. Relancer l'interface
-```
-
-**Windows**
-```powershell
-python src\bootstrap.py data\exports\
-python src\indexer.py data\exports\
-```
-
----
-
-## Différences Linux/macOS → Windows
-
-| Linux/macOS | Windows (PowerShell) |
-|---|---|
-| `python3` | `python` |
-| `source .venv/bin/activate` | `.venv\Scripts\activate` |
-| `/` dans les chemins | `\` dans les chemins |
-| `cp fichier dest` | `copy fichier dest` |
-| `rm -rf dossier/*` | `Remove-Item dossier\* -Recurse` |
 
 ---
 
@@ -242,57 +131,63 @@ python src\indexer.py data\exports\
 
 ```
 RP_IA/
-├── config/
-│   ├── personnages.yaml          # Config joueurs/personnages (à éditer)
-│   └── personnages_draft.yaml    # Brouillon généré par phase0
 ├── data/
-│   ├── exports/                  # Fichiers JSON Discord (à remplir)
-│   └── index/                    # Base vectorielle ChromaDB (auto-généré)
+│   └── exports/          ← exports Discord à déposer ici
 ├── src/
-│   ├── phase0_bootstrap.py       # Extraction automatique des personnages
-│   ├── preprocessing.py          # Nettoyage et structuration des messages
-│   ├── indexer.py                # Chunking + embedding + stockage
-│   ├── rag_pipeline.py           # Pipeline RAG (recherche + Mistral)
-│   └── interface.py              # Interface Gradio
+│   ├── pipeline.py       ← point d'entrée principal
+│   ├── purger.py         ← filtrage RP/HRP
+│   ├── llm.py            ← wrapper Ollama/Mistral
+│   ├── query.py          ← moteur de requête
+│   ├── interface.py      ← interface Gradio
+│   └── steps/
+│       ├── purge.py
+│       ├── translate.py
+│       ├── subdivide.py
+│       ├── analyze_when.py
+│       ├── analyze_where.py
+│       ├── analyze_who.py
+│       ├── analyze_which.py
+│       ├── analyze_what.py
+│       └── analyze_how.py
 ├── requirements.txt
-├── DEPLOIEMENT.md                # Ce fichier
-└── projet_IA_RP_documentation.md # Documentation pédagogique
+└── DEPLOIEMENT.md
 ```
 
 ---
 
-## Dépannage courant
+## Workflow pour de nouveaux exports
+
+```bash
+# 1. Déposer le(s) nouveau(x) fichier(s) dans data/exports/
+# 2. Relancer la pipeline (saute ce qui est déjà traité)
+.venv/bin/python src/pipeline.py
+```
+
+---
+
+## Dépannage
 
 **Ollama ne répond pas**
 ```bash
-# Vérifier que le service tourne
-ollama list
-# Si non, le lancer
-ollama serve
+ollama list    # vérifie que le service tourne
+ollama serve   # le lancer si besoin
 ```
 
-**Erreur "model not found"**
+**Modèle manquant**
 ```bash
 ollama pull mistral
-ollama pull nomic-embed-text
 ```
 
-**L'indexation est lente**
-Normal sur CPU. Un corpus de 5000 messages prend ~5-10 minutes.
-Ne pas interrompre, laisser tourner.
+**Pipeline lente**
+Normal sur CPU. Mistral 7B traite ~2-5 scènes/minute selon leur longueur.
+L'étape 4 (analyze) est la plus longue — elle fait 5 appels LLM par scène.
 
-**Réponses imprécises**
-- Vérifier que `config/personnages.yaml` est bien rempli
-- Augmenter `top_k` dans `rag_pipeline.py` (ligne `build_query_engine`) pour consulter plus de scènes
-- Reformuler la question avec le nom exact du personnage ou de l'arc
+**Reprendre après interruption**
+La pipeline est idempotente. Relancer la même commande, elle reprend là où elle s'est arrêtée.
 
----
-
-## Évolutions possibles (plus tard)
-
-| Évolution | Complexité | Bénéfice |
-|---|---|---|
-| Passer à LLaMA 3.1 8B | Faible (`ollama pull llama3.1`) | Meilleure narration |
-| Filtres par arc/personnage | Moyenne | Questions plus précises |
-| Résumés automatiques par session | Moyenne | Vue d'ensemble rapide |
-| Fine-tuning sur le style RP | Élevée | Réponses très spécialisées |
+**Retraiter une scène**
+```bash
+# Supprimer le dossier d'analyse puis relancer
+rm -rf data/analysis/nom_scene_000
+.venv/bin/python src/pipeline.py --only-step 4 --scene nom_scene_000
+```

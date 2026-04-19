@@ -12,29 +12,37 @@ from pathlib import Path
 import gradio as gr
 import yaml
 
-sys.path.insert(0, str(Path(__file__).parent))
+ROOT    = Path(__file__).resolve().parent.parent
+SRC_DIR = ROOT / "src"
+sys.path.insert(0, str(SRC_DIR))
 
 from query import answer, load_all_lore
 
-DATA_DIR    = Path("data")
-LORE_DIR    = DATA_DIR / "lore"
+DATA_DIR     = ROOT / "data"
+LORE_DIR     = DATA_DIR / "lore"
 ANALYSIS_DIR = DATA_DIR / "analysis"
-PYTHON      = str(Path(__file__).parent.parent / ".venv" / "bin" / "python")
+PYTHON       = str(ROOT / ".venv" / "bin" / "python")
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 
-_pipeline_log = []
+_pipeline_log: list[str] = []
+_pipeline_proc: subprocess.Popen | None = None
 _pipeline_running = False
 
 
+def _resolve_exports(exports_dir: str) -> str:
+    p = Path(exports_dir.strip())
+    if not p.is_absolute():
+        p = ROOT / p
+    return str(p)
+
+
 def _run_pipeline(from_step, only_step, scene_id, exports_dir):
-    global _pipeline_running
+    global _pipeline_running, _pipeline_proc
     _pipeline_running = True
     _pipeline_log.clear()
 
-    cmd = [PYTHON, "src/pipeline.py"]
-    if exports_dir.strip():
-        cmd.append(exports_dir.strip())
+    cmd = [PYTHON, str(SRC_DIR / "pipeline.py"), _resolve_exports(exports_dir)]
     if only_step:
         cmd += ["--only-step", str(only_step)]
     elif from_step > 1:
@@ -43,34 +51,42 @@ def _run_pipeline(from_step, only_step, scene_id, exports_dir):
         cmd += ["--scene", scene_id.strip()]
 
     try:
-        proc = subprocess.Popen(
+        _pipeline_proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            cwd=str(Path(__file__).parent.parent),
         )
-        for line in proc.stdout:
+        for line in _pipeline_proc.stdout:
             _pipeline_log.append(line.rstrip())
-        proc.wait()
-        _pipeline_log.append(f"\n[exit code {proc.returncode}]")
+        _pipeline_proc.wait()
+        _pipeline_log.append(f"\n[exit code {_pipeline_proc.returncode}]")
     except Exception as e:
         _pipeline_log.append(f"[error] {e}")
     finally:
         _pipeline_running = False
+        _pipeline_proc = None
 
 
 def start_pipeline(from_step, only_step_str, scene_id, exports_dir):
     if _pipeline_running:
         return "Pipeline already running…"
-    only_step = int(only_step_str) if only_step_str else None
-    t = threading.Thread(
+    only_step = int(only_step_str) if only_step_str.strip() else None
+    threading.Thread(
         target=_run_pipeline,
         args=(from_step, only_step, scene_id, exports_dir),
         daemon=True,
-    )
-    t.start()
+    ).start()
     return "Pipeline started…"
+
+
+def stop_pipeline():
+    global _pipeline_proc
+    if _pipeline_proc and _pipeline_proc.poll() is None:
+        _pipeline_proc.terminate()
+        _pipeline_log.append("\n[stopped by user]")
+        return "Pipeline stopped."
+    return "No pipeline running."
 
 
 def get_pipeline_log():
@@ -186,7 +202,8 @@ with gr.Blocks(title="RP_IA") as app:
                 )
 
             with gr.Row():
-                run_btn  = gr.Button("Run Pipeline", variant="primary")
+                run_btn  = gr.Button("Run Pipeline", variant="primary", scale=2)
+                stop_btn = gr.Button("Stop", variant="stop", scale=1)
                 status   = gr.Textbox(label="Status", interactive=False, scale=3)
 
             log_box = gr.Textbox(
@@ -201,6 +218,7 @@ with gr.Blocks(title="RP_IA") as app:
                 [from_step_slider, only_step_input, scene_input, exports_input],
                 status,
             )
+            stop_btn.click(stop_pipeline, outputs=status)
 
             refresh_log_btn = gr.Button("Refresh log", size="sm")
             refresh_log_btn.click(get_pipeline_log, outputs=log_box)

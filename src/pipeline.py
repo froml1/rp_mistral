@@ -22,7 +22,8 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
 
 from steps.purge        import run_purge
 from steps.translate    import run_translate
@@ -34,7 +35,7 @@ from steps.analyze_which import run_which
 from steps.analyze_what  import run_what
 from steps.analyze_how   import run_how
 
-DATA_DIR     = Path("data")
+DATA_DIR     = ROOT / "data"
 EXPORTS_DIR  = DATA_DIR / "exports"
 PURGED_DIR   = DATA_DIR / "purged"
 TRANSLATED_DIR = DATA_DIR / "translated"

@@ -13,11 +13,12 @@ from pathlib import Path
 
 import yaml
 
-sys.path.insert(0, str(Path(__file__).parent))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
 
 from llm import call_llm
 
-DATA_DIR      = Path("data")
+DATA_DIR      = ROOT / "data"
 LORE_DIR      = DATA_DIR / "lore"
 ANALYSIS_DIR  = DATA_DIR / "analysis"
 HOW_CTX_FILE  = LORE_DIR / "how_context.yaml"
