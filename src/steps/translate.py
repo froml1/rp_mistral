@@ -47,13 +47,20 @@ def _translate_batch(messages: list[dict], batch_label: str) -> dict[int, str]:
         f"[{i}] {m.get('content', '')}"
         for i, m in enumerate(messages)
     )
-    _log(f"    -> envoi batch {batch_label} au LLM ({len(messages)} msgs)...")
+    _log(f"    -> sending batch {batch_label} to LLM ({len(messages)} msgs)...")
     data = call_llm_json(_PROMPT.format(messages=formatted), num_predict=2048, num_ctx=8192)
     return {
         item["index"]: item.get("content_en", "")
         for item in (data.get("messages") or [])
         if isinstance(item, dict) and "index" in item
     }
+
+
+def _save(out_path: Path, messages: list[dict]):
+    out_path.write_text(
+        json.dumps({"messages": messages}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def run_translate(purged_dir: Path, out_dir: Path, exports_dir: Path | None = None) -> list[Path]:
@@ -66,14 +73,8 @@ def run_translate(purged_dir: Path, out_dir: Path, exports_dir: Path | None = No
     produced = []
     for fp in files:
         out_path = out_dir / fp.name
-        if out_path.exists() and _is_valid_json(out_path):
-            _log(f"  [skip] {fp.name} -> already translated")
-            produced.append(out_path)
-            continue
-        if out_path.exists():
-            _log(f"  [corrupt] {out_path.name} is malformed, re-translating...")
 
-        _log(f"  Translating {fp.name}...")
+        # Load source
         if not _is_valid_json(fp):
             if exports_dir:
                 _log(f"  [corrupt] {fp.name} is malformed, re-purging...")
@@ -84,22 +85,39 @@ def run_translate(purged_dir: Path, out_dir: Path, exports_dir: Path | None = No
         with open(fp, encoding="utf-8") as f:
             data = json.load(f)
         messages = data.get("messages", data) if isinstance(data, dict) else data
-        total = len(messages)
-        _log(f"  {total} messages à traduire par batches de {BATCH_SIZE}")
 
-        for start in range(0, total, BATCH_SIZE):
-            batch = messages[start:start + BATCH_SIZE]
-            end = min(start + BATCH_SIZE, total)
-            label = f"{end}/{total}"
+        # Load partial progress if the output already exists
+        if out_path.exists() and _is_valid_json(out_path):
+            with open(out_path, encoding="utf-8") as f:
+                existing = json.load(f)
+            existing_msgs = existing.get("messages", existing) if isinstance(existing, dict) else existing
+            # Merge already-translated content_en back into messages (matched by index)
+            for i, msg in enumerate(messages):
+                if i < len(existing_msgs) and existing_msgs[i].get("content_en"):
+                    msg["content_en"] = existing_msgs[i]["content_en"]
+
+        # Identify which messages still need translation
+        missing_indices = [i for i, m in enumerate(messages) if not m.get("content_en")]
+        if not missing_indices:
+            _log(f"  [skip] {fp.name} -> all {len(messages)} messages already translated")
+            produced.append(out_path)
+            continue
+
+        _log(f"  Translating {fp.name}: {len(missing_indices)}/{len(messages)} messages missing")
+
+        # Process missing messages in batches
+        for batch_start in range(0, len(missing_indices), BATCH_SIZE):
+            batch_idx = missing_indices[batch_start:batch_start + BATCH_SIZE]
+            batch = [messages[i] for i in batch_idx]
+            end = batch_start + len(batch_idx)
+            label = f"{end}/{len(missing_indices)} missing"
             translations = _translate_batch(batch, label)
-            for j, msg in enumerate(batch):
-                msg["content_en"] = translations.get(j, msg.get("content", ""))
-            _log(f"    OK {label} messages traduits")
+            for j, global_i in enumerate(batch_idx):
+                messages[global_i]["content_en"] = translations.get(j, messages[global_i].get("content", ""))
+            # Save after each batch so a crash doesn't lose progress
+            _save(out_path, messages)
+            _log(f"    OK {label} translated")
 
-        out_path.write_text(
-            json.dumps({"messages": messages}, ensure_ascii=False, indent=2),
-            encoding="utf-8"
-        )
         produced.append(out_path)
 
     return produced

@@ -10,6 +10,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
+from steps.manual_lore import load_manual_place, load_all_manual_places, merge_manual_into_place
 
 
 def _is_valid_json(path: Path) -> bool:
@@ -114,7 +115,7 @@ def run_where(scene_file: Path, analysis_dir: Path, places_dir: Path) -> dict:
     messages = scene["messages"]
     text = _scene_text(messages)
 
-    # Load known places (all of them as context)
+    # Load known places (all of them as context, manual overrides injected)
     known = {}
     if places_dir.exists():
         for yf in places_dir.glob("*.yaml"):
@@ -122,6 +123,12 @@ def run_where(scene_file: Path, analysis_dir: Path, places_dir: Path) -> dict:
                 d = yaml.safe_load(f) or {}
                 if d.get("name"):
                     known[d["name"]] = d
+    manual_places = load_all_manual_places()
+    for name, mp in manual_places.items():
+        if name in known:
+            known[name] = merge_manual_into_place(known[name], mp)
+        else:
+            known[name] = mp
 
     known_yaml = yaml.dump(known, allow_unicode=True) if known else "none"
     result = call_llm_json(_PROMPT.format(known_yaml=known_yaml, text=text), num_predict=2048)
@@ -132,6 +139,7 @@ def run_where(scene_file: Path, analysis_dir: Path, places_dir: Path) -> dict:
     for loc in locations:
         existing = _load_place_yaml(places_dir, loc["canonical_name"])
         merged = _merge_place(existing, loc, scene_id)
+        merged = merge_manual_into_place(merged, load_manual_place(loc["canonical_name"]))
         _save_place_yaml(places_dir, loc["canonical_name"], merged)
         print(f"    place updated: {loc['canonical_name']}")
 

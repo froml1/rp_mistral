@@ -1,12 +1,13 @@
 """Shared Ollama/Mistral wrapper."""
 
 import json
+import os
 import sys
 
 import requests
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-LLM_MODEL  = "mistral"
+LLM_MODEL  = os.getenv("RP_MODEL", "mistral")  # override: RP_MODEL=mistral-rp python src/pipeline.py
 
 
 def call_llm(prompt: str, fmt: str | None = None, num_predict: int = -1, num_ctx: int = 8192) -> str:

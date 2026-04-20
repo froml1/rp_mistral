@@ -72,6 +72,25 @@ def _is_valid_json(path: Path) -> bool:
         return False
 
 
+_PROGRESS_FILE = "_progress.json"
+
+
+def _load_manifest(file_out_dir: Path) -> dict:
+    mf = file_out_dir / _PROGRESS_FILE
+    if mf.exists():
+        try:
+            return json.loads(mf.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _save_manifest(file_out_dir: Path, manifest: dict):
+    (file_out_dir / _PROGRESS_FILE).write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
 def run_subdivide(translated_dir: Path, out_dir: Path, purged_dir: Path | None = None) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     files = list(translated_dir.glob("**/*.json"))
@@ -82,19 +101,24 @@ def run_subdivide(translated_dir: Path, out_dir: Path, purged_dir: Path | None =
     produced = []
     for fp in files:
         file_out_dir = out_dir / fp.stem
-        if file_out_dir.exists() and any(file_out_dir.glob("*.json")):
-            existing = list(file_out_dir.glob("*.json"))
-            invalid = [f for f in existing if not _is_valid_json(f)]
-            if not invalid:
-                print(f"  [skip] {fp.name} -> {len(existing)} scenes already split")
-                produced.extend(existing)
-                continue
-            print(f"  [corrupt] {len(invalid)} scene file(s) malformed in {file_out_dir.name}, re-subdividing...")
-            for f in existing:
-                f.unlink()
-
         file_out_dir.mkdir(parents=True, exist_ok=True)
-        print(f"  Subdividing {fp.name}...")
+
+        # Detect corrupt scene files and reset manifest if any found
+        scene_files = [f for f in file_out_dir.glob("*.json") if f.name != _PROGRESS_FILE]
+        invalid = [f for f in scene_files if not _is_valid_json(f)]
+        if invalid:
+            print(f"  [corrupt] {len(invalid)} malformed scene(s) in {file_out_dir.name}, resetting progress")
+            for f in invalid:
+                f.unlink()
+            (file_out_dir / _PROGRESS_FILE).unlink(missing_ok=True)
+
+        manifest = _load_manifest(file_out_dir)
+
+        if manifest.get("done"):
+            existing = sorted(f for f in file_out_dir.glob("*.json") if f.name != _PROGRESS_FILE)
+            print(f"  [skip] {fp.name} -> {len(existing)} scenes already done")
+            produced.extend(existing)
+            continue
 
         if not _is_valid_json(fp):
             if purged_dir:
@@ -110,10 +134,20 @@ def run_subdivide(translated_dir: Path, out_dir: Path, purged_dir: Path | None =
         messages = data.get("messages", data) if isinstance(data, dict) else data
 
         pre_scenes = _group_by_scene_tag(messages)
-        print(f"  {len(pre_scenes)} scenes from time gaps")
+        processed = manifest.get("processed", {})  # {str(pre_idx): sub_scene_count}
+        scene_idx = sum(processed.values())
 
-        scene_idx = 0
-        for pre in pre_scenes:
+        remaining = len(pre_scenes) - len(processed)
+        if remaining < len(pre_scenes):
+            print(f"  Resuming {fp.name}: {len(processed)}/{len(pre_scenes)} pre-scenes done")
+        else:
+            print(f"  Subdividing {fp.name}: {len(pre_scenes)} scenes from time gaps")
+
+        for pre_idx, pre in enumerate(pre_scenes):
+            str_idx = str(pre_idx)
+            if str_idx in processed:
+                continue
+
             sub_scenes = _subdivide(pre)
             for sub in sub_scenes:
                 scene_id = f"{fp.stem}_{scene_idx:03d}"
@@ -121,11 +155,19 @@ def run_subdivide(translated_dir: Path, out_dir: Path, purged_dir: Path | None =
                 scene_path.write_text(
                     json.dumps({"scene_id": scene_id, "source": fp.name, "messages": sub},
                                ensure_ascii=False, indent=2),
-                    encoding="utf-8"
+                    encoding="utf-8",
                 )
-                produced.append(scene_path)
                 scene_idx += 1
 
+            processed[str_idx] = len(sub_scenes)
+            _save_manifest(file_out_dir, {"processed": processed})
+
+        manifest["done"] = True
+        manifest["processed"] = processed
+        _save_manifest(file_out_dir, manifest)
+
+        all_scenes = sorted(f for f in file_out_dir.glob("*.json") if f.name != _PROGRESS_FILE)
+        produced.extend(all_scenes)
         print(f"  -> {scene_idx} final scenes")
 
     return produced

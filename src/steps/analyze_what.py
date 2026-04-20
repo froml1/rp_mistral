@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
+from steps.manual_lore import load_manual_events, merge_manual_into_what
 
 
 def _is_valid_json(path: Path) -> bool:
@@ -89,6 +90,7 @@ def run_what(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who:
         num_ctx=8192,
     )
 
+    scene_id = scene["scene_id"]
     output = {
         "summary": str(result.get("summary") or ""),
         "events":  [
@@ -96,6 +98,7 @@ def run_what(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who:
             if isinstance(e, dict) and e.get("description")
         ],
     }
+    output = merge_manual_into_what(output, load_manual_events(scene_id))
 
     analysis_dir.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")

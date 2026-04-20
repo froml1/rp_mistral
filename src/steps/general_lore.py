@@ -88,6 +88,11 @@ def update_general_what(lore_dir: Path, scene_id: str, what_data: dict) -> None:
             existing = yaml.safe_load(f) or {}
 
     scenes = existing.get("scenes", {})
+
+    if scene_id in scenes:
+        print(f"    [skip] general_what: {scene_id} already processed")
+        return
+
     scenes[scene_id] = {
         "summary": what_data.get("summary", ""),
         "events": [e.get("description", "") for e in (what_data.get("events") or [])[:10]],
@@ -102,11 +107,11 @@ def update_general_what(lore_dir: Path, scene_id: str, what_data: dict) -> None:
         )
         result = call_llm_json(_WHAT_PROMPT.format(scenes_data=scenes_text), num_predict=1024)
         recurrences = {
-            "themes":                        result.get("recurring_themes") or [],
-            "actions":                       result.get("recurring_actions") or [],
-            "objects":                       result.get("recurring_objects") or [],
-            "character_interactions":        result.get("recurring_character_interactions") or [],
-            "overall_summary":               result.get("overall_summary") or "",
+            "themes":                 result.get("recurring_themes") or [],
+            "actions":                result.get("recurring_actions") or [],
+            "objects":                result.get("recurring_objects") or [],
+            "character_interactions": result.get("recurring_character_interactions") or [],
+            "overall_summary":        result.get("overall_summary") or "",
         }
 
     existing["recurrences"] = recurrences
@@ -169,6 +174,10 @@ def update_general_how(lore_dir: Path, scene_id: str, how_data: dict) -> None:
             existing = yaml.safe_load(f) or {}
 
     scenes_how = existing.get("scenes_how", {})
+
+    if scene_id in scenes_how:
+        print(f"    [skip] general_how: {scene_id} already processed")
+        return
     scenes_how[scene_id] = {
         "links": [
             {

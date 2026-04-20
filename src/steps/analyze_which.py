@@ -11,6 +11,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
+from steps.manual_lore import load_manual_concept, load_all_manual_concepts, merge_manual_into_concept
 
 
 def _is_valid_json(path: Path) -> bool:
@@ -134,6 +135,12 @@ def run_which(scene_file: Path, analysis_dir: Path, concepts_dir: Path) -> dict:
                 d = yaml.safe_load(f) or {}
                 if d.get("name"):
                     known[d["name"]] = d
+    manual_concepts = load_all_manual_concepts()
+    for name, mc in manual_concepts.items():
+        if name in known:
+            known[name] = merge_manual_into_concept(known[name], mc)
+        else:
+            known[name] = mc
 
     known_yaml = yaml.dump(known, allow_unicode=True) if known else "none"
     result = call_llm_json(
@@ -149,6 +156,7 @@ def run_which(scene_file: Path, analysis_dir: Path, concepts_dir: Path) -> dict:
     for concept in concepts:
         existing = _load_concept_yaml(concepts_dir, concept["canonical_name"])
         merged = _merge_concept(existing, concept, scene_id)
+        merged = merge_manual_into_concept(merged, load_manual_concept(concept["canonical_name"]))
         _save_concept_yaml(concepts_dir, concept["canonical_name"], merged)
         print(f"    concept updated: {concept['canonical_name']}")
 

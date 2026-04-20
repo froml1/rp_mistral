@@ -136,16 +136,16 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
                 gap = (ts - last_ts).total_seconds()
                 if verbose and gap > 60:
                     mins = int(gap // 60)
-                    print(f"\n  [gap {mins}min] {'bloc actif' if block_active else 'hors bloc'} | scene {scene_id} | {ts.strftime('%Y-%m-%d %H:%M')}")
+                    print(f"\n  [gap {mins}min] {'block active' if block_active else 'outside block'} | scene {scene_id} | {ts.strftime('%Y-%m-%d %H:%M')}")
                 if block_active:
                     if gap > _BLOCK_END_SECS:
                         block_active = False
                         if verbose:
-                            print(f"  -> fin de bloc (gap {int(gap//60)}min > 60min)")
+                            print(f"  -> block ended (gap {int(gap//60)}min > 60min)")
                     elif gap > _SCENE_BREAK_SECS:
                         scene_id += 1
                         if verbose:
-                            print(f"  -> nouvelle scene {scene_id} (gap {int(gap//60)}min > 30min)")
+                            print(f"  -> new scene {scene_id} (gap {int(gap//60)}min > 30min)")
             if ts:
                 last_ts = ts
 
@@ -160,7 +160,7 @@ def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
                         block_active = True
                         scene_id += 1
                         if verbose:
-                            print(f"  -> BLOC OUVERT - scene {scene_id} | {ts.strftime('%Y-%m-%d %H:%M') if ts else '?'}")
+                            print(f"  -> BLOCK OPENED - scene {scene_id} | {ts.strftime('%Y-%m-%d %H:%M') if ts else '?'}")
                     else:
                         if verbose:
                             print(f"  [rejete] {content[:60]}")
