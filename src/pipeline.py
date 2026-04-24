@@ -5,31 +5,36 @@ Usage:
   python src/pipeline.py [exports_dir] [options]
 
 Options:
-  --from-step N    Resume from step N (1-5), default 1
+  --from-step N    Resume from step N (1-7), default 1
   --only-step N    Run only step N
-  --scene SCENE_ID Process only this scene (step 4 only)
+  --scene SCENE_ID Process only this scene (step 6 only)
 
 Steps:
-  1 - Purge       data/exports/   -> data/purged/
-  2 - Translate   data/purged/    -> data/translated/
+  1 - Purge       data/exports/    -> data/purged/
+  2 - Translate   data/purged/     -> data/translated/
   3 - Subdivide   data/translated/ -> data/scenes/
-  4 - Analyze     data/scenes/    -> data/analysis/{scene_id}/
-                                     data/lore/characters/ places/ concepts/
-  5 - Post        voice fingerprints + general syntheses (batch, after all scenes)
+  4 - Sweep       data/scenes/     -> data/lore/sweep.yaml  (light entity pass, whole corpus)
+  5 - RP Filter   data/scenes/     -> data/analysis/{id}/rp_check.json + data/rp_report.json
+  6 - Analyze     data/scenes/     -> data/analysis/{scene_id}/  (skips non-RP scenes)
+                                      data/lore/characters/ places/ concepts/
+  7 - Post        voice fingerprints + general syntheses (batch, after all scenes)
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from steps.purge        import run_purge
-from steps.translate    import run_translate
-from steps.subdivide    import run_subdivide
-from steps.analyze_context  import run_context   # when + where (1 call)
-from steps.analyze_entities import run_entities  # who  + which (1 call)
+from steps.purge         import run_purge
+from steps.translate     import run_translate
+from steps.subdivide     import run_subdivide
+from steps.lore_sweep    import run_lore_sweep
+from steps.rp_filter     import run_rp_filter, is_scene_rp
+from steps.analyze_context  import run_context
+from steps.analyze_entities import run_entities
 from steps.analyze_what     import run_what
 from steps.analyze_how      import run_how
 from steps.analyze_voice    import run_voice
@@ -38,61 +43,68 @@ from steps.general_lore  import (
     update_general_what, update_general_how,
 )
 
-DATA_DIR     = ROOT / "data"
-EXPORTS_DIR  = DATA_DIR / "exports"
-PURGED_DIR   = DATA_DIR / "purged"
+DATA_DIR       = ROOT / "data"
+EXPORTS_DIR    = DATA_DIR / "exports"
+PURGED_DIR     = DATA_DIR / "purged"
 TRANSLATED_DIR = DATA_DIR / "translated"
-SCENES_DIR   = DATA_DIR / "scenes"
-LORE_DIR     = DATA_DIR / "lore"
-ANALYSIS_DIR = DATA_DIR / "analysis"
+SCENES_DIR     = DATA_DIR / "scenes"
+LORE_DIR       = DATA_DIR / "lore"
+ANALYSIS_DIR   = DATA_DIR / "analysis"
 
 
-def run_step4(scene_files: list[Path], only_scene: str | None = None):
+def run_step6(scene_files: list[Path], only_scene: str | None = None):
     chars_dir    = LORE_DIR / "characters"
     places_dir   = LORE_DIR / "places"
     concepts_dir = LORE_DIR / "concepts"
 
+    skipped_rp = 0
     for scene_file in sorted(scene_files):
         scene_id = scene_file.stem
         if only_scene and scene_id != only_scene:
+            continue
+
+        if not is_scene_rp(ANALYSIS_DIR, scene_id):
+            print(f"\n  [skip non-RP] {scene_id}")
+            skipped_rp += 1
             continue
 
         print(f"\n  [{scene_id}]")
         ad = ANALYSIS_DIR / scene_id
 
-        when, where = run_context(scene_file, ad, places_dir)    # 1 call
-        who, which  = run_entities(scene_file, ad, chars_dir, concepts_dir)  # 1 call
-        what        = run_what(scene_file, ad, when, where, who, which)      # 1 call
-        run_how(scene_file, ad, when, where, who, which, what)               # 1 call
+        when, where = run_context(scene_file, ad, places_dir, lore_dir=LORE_DIR)
+        who, which  = run_entities(scene_file, ad, chars_dir, concepts_dir, lore_dir=LORE_DIR)
+        what        = run_what(scene_file, ad, when, where, who, which)
+        run_how(scene_file, ad, when, where, who, which, what)
+
+    if skipped_rp:
+        print(f"\n  [analyze] {skipped_rp} non-RP scene(s) skipped — see data/rp_report.json")
 
 
-def run_step5(scene_files: list[Path], only_scene: str | None = None):
+def run_step7(scene_files: list[Path], only_scene: str | None = None):
     """Post-processing: voice fingerprints + general syntheses. Runs after all scenes."""
     chars_dir    = LORE_DIR / "characters"
     places_dir   = LORE_DIR / "places"
     concepts_dir = LORE_DIR / "concepts"
 
-    # Voice: one LLM call per character per scene — heavy, deferred here
     for scene_file in sorted(scene_files):
         scene_id = scene_file.stem
         if only_scene and scene_id != only_scene:
+            continue
+        if not is_scene_rp(ANALYSIS_DIR, scene_id):
             continue
         ad = ANALYSIS_DIR / scene_id
         who_path = ad / "who.json"
         if not who_path.exists():
             continue
-        import json as _json
-        who = _json.loads(who_path.read_text(encoding="utf-8"))
+        who = json.loads(who_path.read_text(encoding="utf-8"))
         print(f"\n  [voice] {scene_id}")
         run_voice(scene_file, ad, who)
 
-    # General syntheses — compile all YAMLs + summarize with LLM
     print("\n  [generals] compiling who / where / which…")
     update_general_who(chars_dir, LORE_DIR)
     update_general_where(places_dir, LORE_DIR)
     update_general_which(concepts_dir, LORE_DIR)
 
-    # Rebuild vector index from all updated YAMLs
     print("  [store] rebuilding ChromaDB index…")
     try:
         from store import reindex
@@ -105,16 +117,16 @@ def run_step5(scene_files: list[Path], only_scene: str | None = None):
         scene_id = scene_file.stem
         if only_scene and scene_id != only_scene:
             continue
+        if not is_scene_rp(ANALYSIS_DIR, scene_id):
+            continue
         ad = ANALYSIS_DIR / scene_id
         what_path = ad / "what.json"
         how_path  = ad / "how.json"
         if what_path.exists():
-            import json as _json
-            what = _json.loads(what_path.read_text(encoding="utf-8"))
+            what = json.loads(what_path.read_text(encoding="utf-8"))
             update_general_what(LORE_DIR, scene_id, what)
         if how_path.exists():
-            import json as _json
-            how = _json.loads(how_path.read_text(encoding="utf-8"))
+            how = json.loads(how_path.read_text(encoding="utf-8"))
             update_general_how(LORE_DIR, scene_id, how)
 
 
@@ -142,21 +154,39 @@ def run_pipeline(
         run_subdivide(TRANSLATED_DIR, SCENES_DIR, purged_dir=PURGED_DIR)
 
     if should_run(4):
-        print("\n== STEP 4 - ANALYZE ==")
+        print("\n== STEP 4 - LORE SWEEP ==")
+        scene_files = sorted(SCENES_DIR.glob("**/*.json"))
+        if not scene_files:
+            print("  No scene files found. Run step 3 first.")
+            return
+        print(f"  {len(scene_files)} scenes to sweep")
+        run_lore_sweep(SCENES_DIR, LORE_DIR)
+
+    if should_run(5):
+        print("\n== STEP 5 - RP FILTER ==")
+        scene_files = sorted(SCENES_DIR.glob("**/*.json"))
+        if not scene_files:
+            print("  No scene files found.")
+            return
+        print(f"  {len(scene_files)} scenes to filter")
+        run_rp_filter(SCENES_DIR, LORE_DIR, ANALYSIS_DIR)
+
+    if should_run(6):
+        print("\n== STEP 6 - ANALYZE ==")
         scene_files = sorted(SCENES_DIR.glob("**/*.json"))
         if not scene_files:
             print("  No scene files found. Run step 3 first.")
             return
         print(f"  {len(scene_files)} scenes to analyze")
-        run_step4(scene_files, only_scene=only_scene)
+        run_step6(scene_files, only_scene=only_scene)
 
-    if should_run(5):
-        print("\n== STEP 5 - POST (voice + generals) ==")
+    if should_run(7):
+        print("\n== STEP 7 - POST (voice + generals) ==")
         scene_files = sorted(SCENES_DIR.glob("**/*.json"))
         if not scene_files:
             print("  No scene files found.")
             return
-        run_step5(scene_files, only_scene=only_scene)
+        run_step7(scene_files, only_scene=only_scene)
 
     print("\n== PIPELINE DONE ==")
 
@@ -166,11 +196,11 @@ if __name__ == "__main__":
     parser.add_argument("exports_dir", nargs="?", default="data/exports",
                         help="Raw exports directory (step 1 input)")
     parser.add_argument("--from-step", type=int, default=1, dest="from_step",
-                        help="Resume from step N (1-5)")
+                        help="Resume from step N (1-7)")
     parser.add_argument("--only-step", type=int, default=None, dest="only_step",
-                        help="Run only step N (1-5)")
+                        help="Run only step N (1-7)")
     parser.add_argument("--scene", type=str, default=None,
-                        help="Process only this scene ID (step 4)")
+                        help="Process only this scene ID (step 6)")
     args = parser.parse_args()
 
     run_pipeline(

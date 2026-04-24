@@ -14,6 +14,7 @@ from steps.manual_lore import (
     load_manual_char, load_all_manual_chars, merge_manual_into_char,
     load_manual_concept, load_all_manual_concepts, merge_manual_into_concept,
 )
+from steps.lore_sweep import sweep_context_lines
 from lore_summary import update_summary, summaries_for_dir
 try:
     from store import upsert as _store_upsert
@@ -266,7 +267,7 @@ def _scene_text(messages: list[dict]) -> str:
     )
 
 
-def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts_dir: Path) -> tuple[dict, dict]:
+def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts_dir: Path, lore_dir: Path | None = None) -> tuple[dict, dict]:
     """Returns (who_dict, which_dict). Writes who.json and which.json."""
     who_path   = analysis_dir / "who.json"
     which_path = analysis_dir / "which.json"
@@ -319,9 +320,13 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
     for name, mc in load_all_manual_concepts().items():
         known_concepts[name] = merge_manual_into_concept(known_concepts.get(name, {}), mc) if name in known_concepts else mc
 
-    # Inject only summary cards — keeps the prompt compact regardless of corpus size
-    known_chars_yaml    = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known_chars.items())    or "none"
-    known_concepts_yaml = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known_concepts.items()) or "none"
+    # Prefer sweep (richer, corpus-wide) over per-scene cumulative summaries
+    if lore_dir is not None:
+        known_chars_yaml    = sweep_context_lines(lore_dir, "characters", limit=20) or "none"
+        known_concepts_yaml = sweep_context_lines(lore_dir, "concepts",   limit=15) or "none"
+    else:
+        known_chars_yaml    = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known_chars.items())    or "none"
+        known_concepts_yaml = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known_concepts.items()) or "none"
 
     result = call_llm_json(
         _PROMPT.format(

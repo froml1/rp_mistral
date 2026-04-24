@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
 from steps.manual_lore import load_manual_place, load_all_manual_places, merge_manual_into_place
+from steps.lore_sweep import sweep_context_lines
 from lore_summary import update_summary
 try:
     from store import upsert as _store_upsert
@@ -119,7 +120,7 @@ def _merge_place(existing: dict, extracted: dict, scene_id: str) -> dict:
     return merged
 
 
-def run_context(scene_file: Path, analysis_dir: Path, places_dir: Path) -> tuple[dict, dict]:
+def run_context(scene_file: Path, analysis_dir: Path, places_dir: Path, lore_dir: Path | None = None) -> tuple[dict, dict]:
     """Returns (when_dict, where_dict). Writes when.json and where.json."""
     when_path  = analysis_dir / "when.json"
     where_path = analysis_dir / "where.json"
@@ -155,7 +156,11 @@ def run_context(scene_file: Path, analysis_dir: Path, places_dir: Path) -> tuple
     for name, mp in load_all_manual_places().items():
         known[name] = merge_manual_into_place(known.get(name, {}), mp) if name in known else mp
 
-    known_yaml = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known.items()) or "none"
+    # Prefer sweep (richer, corpus-wide) over per-scene cumulative summaries
+    if lore_dir is not None:
+        known_yaml = sweep_context_lines(lore_dir, "places", limit=15) or "none"
+    else:
+        known_yaml = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known.items()) or "none"
     result = call_llm_json(_PROMPT.format(known_yaml=known_yaml, text=text), num_predict=1024)
 
     # — When —
