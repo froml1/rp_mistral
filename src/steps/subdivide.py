@@ -141,77 +141,75 @@ def _drop_duplicate_opening(messages: list[dict], prev_messages: list[dict],
 
 # ── OOC prefix trimmer ───────────────────────────────────────────────────────
 
-_RP_START_PROMPT = """\
-These messages mix out-of-character (OOC) player chat with in-character roleplay.
-Find the index of the FIRST genuinely in-character RP message.
+_CONTEXT_CHECK_PROMPT = """\
+Two groups of messages from a Discord RP channel.
 
-RP messages: character dialogue ("..."), narrative scene descriptions, \
-character actions written in third person or as a named character.
-OOC messages: player reactions, scheduling, first-person casual remarks \
-("j'écoute...", "*lève les bras*", "je suis là", "ok prêt"), meta/rules talk.
+GROUP A — before the first narrative action:
+{prefix}
 
-Return {{"rp_start": 4}} for the index, {{"rp_start": 0}} if RP starts immediately, \
-or {{"rp_start": null}} if no RP is found.
+GROUP B — starts with a narrative RP action (*...*):
+{rp_open}
 
-Messages:
-{messages}"""
+Are these two groups part of the SAME continuous scene (same characters, same narrative flow, \
+GROUP A is in-universe dialogue leading naturally into GROUP B)?
+Or is GROUP A out-of-character player discussion that happened BEFORE GROUP B's scene started?
 
-
-def _find_rp_start(messages: list[dict], scan: int = 20) -> int | None:
-    """
-    Ask the LLM where the actual RP begins in the first `scan` messages.
-    Returns the start index, or None if no RP found.
-    Only called when the scene has a suspicious non-RP opening.
-    """
-    preview = messages[:scan]
-    lines   = "\n".join(
-        f"[{i}] {(m.get('content_en') or m.get('content', ''))[:120]}"
-        for i, m in enumerate(preview)
-    )
-    result = call_llm_json(
-        _RP_START_PROMPT.format(messages=lines),
-        num_predict=20,
-        num_ctx=2048,
-    )
-    idx = result.get("rp_start")
-    if idx is None:
-        return None
-    if isinstance(idx, int) and 0 <= idx < len(messages):
-        return idx
-    return None
+JSON: {{"same_scene": true}} or {{"same_scene": false}}"""
 
 
 def _trim_rp_prefix(messages: list[dict]) -> list[dict]:
     """
-    If the scene opens with OOC content, find where RP actually starts and trim the prefix.
-    Only scans the first 20 messages to detect the transition — avoids expensive calls
-    on scenes that are already RP from the start.
+    Cut the OOC prefix before the first narrative RP action (*...*).
+
+    Strategy:
+    1. Find the first message with a genuine *action* (3+ word content in asterisks).
+    2. If no prefix → return as-is.
+    3. Ask LLM: is the prefix the same scene as what follows, or different context?
+    4. If different context → cut at the *.
     """
-    # Quick heuristic: if the first message already looks like RP, skip the LLM call
-    first_content = messages[0].get("content_en") or messages[0].get("content", "") if messages else ""
-    first_is_rp = (
-        re.search(r'\*[^*]{10,}\*', first_content) or   # long asterisk action
-        len(first_content) > 150                          # long narrative opening
+    if not messages:
+        return messages
+
+    # Find first genuine asterisk action (not a single word like *lève*)
+    anchor = next(
+        (i for i, m in enumerate(messages)
+         if re.search(r'\*[^*]{15,}\*', m.get("content_en") or m.get("content", ""))),
+        None,
     )
-    if first_is_rp:
+
+    # No anchor or already at start → nothing to trim
+    if not anchor:
         return messages
 
-    # Check if the opening looks OOC enough to warrant trimming
-    scan = min(20, len(messages))
-    prefix_contents = [
-        m.get("content_en") or m.get("content", "")
-        for m in messages[:scan]
-    ]
-    ooc_in_prefix = sum(1 for c in prefix_contents if _OOC_PATTERNS.search(c))
-    if ooc_in_prefix / scan < 0.2:
-        return messages   # opening looks fine, skip LLM call
+    prefix = messages[:anchor]
 
-    # LLM finds the exact transition point
-    start = _find_rp_start(messages, scan=scan)
-    if start is None or start == 0:
-        return messages
-    print(f"    [trim] dropped {start} OOC prefix message(s)")
-    return messages[start:]
+    # Quick pass: if the prefix already looks fully RP (long messages, no OOC) → keep
+    prefix_contents = [m.get("content_en") or m.get("content", "") for m in prefix]
+    ooc_count = sum(1 for c in prefix_contents if _OOC_PATTERNS.search(c))
+    avg_prefix_len = sum(len(c) for c in prefix_contents) / len(prefix_contents)
+
+    if ooc_count == 0 and avg_prefix_len > 80:
+        return messages   # prefix looks narrative, don't cut
+
+    # LLM context comparison — cheap call, binary answer
+    fmt_group = lambda msgs, n: "\n".join(
+        f"[{i}] {(m.get('content_en') or m.get('content', ''))[:120]}"
+        for i, m in enumerate(msgs[:n])
+    )
+    result = call_llm_json(
+        _CONTEXT_CHECK_PROMPT.format(
+            prefix=fmt_group(prefix, 8),
+            rp_open=fmt_group(messages[anchor:], 5),
+        ),
+        num_predict=20,
+        num_ctx=2048,
+    )
+
+    if not result.get("same_scene", True):
+        print(f"    [trim] {anchor} OOC prefix message(s) dropped (cut on *)")
+        return messages[anchor:]
+
+    return messages
 
 
 # ── LLM split ─────────────────────────────────────────────────────────────────

@@ -30,11 +30,15 @@ _MENTION      = re.compile(r'<@!?\d+>')
 _URL          = re.compile(r'https?://\S+')
 _NARRATIVE    = re.compile(r'[a-zA-ZÀ-ÿ0-9]{2,}')
 
-# Discord reply/quote: markdown blockquote OR bracketed date reference
-# e.g. "> original message" or "[15/01/2024]" or "[15 jan. 2024 à 20:30]"
+# Discord reply/quote: markdown blockquote OR bracketed date/time reference.
+# Covers all date formats: [15/01/2024], [2024-01-15], [15 jan. 2024 à 20:30],
+# [lundi 15 janvier], [Today at 20:30], [AuthorName — 15/01/2024 20:30] …
+# Does NOT drop RP brackets like [Yaya entre dans la salle] (no digits/separators).
 _DISCORD_QUOTE = re.compile(
-    r'^>\s+'                                              # markdown blockquote
-    r'|^\[\d{1,2}[\s/\.\-]\w',                           # [date] reference
+    r'^>\s+'                                    # markdown blockquote
+    r'|\[.{0,60}?\d{4}.{0,30}?\]'             # bracket with 4-digit year anywhere
+    r'|\[.{0,30}?\d{1,2}[/\.]\d{1,2}[/\.]'   # bracket with d/m/ or d.m. pattern
+    r'|\[.{0,30}?\d{1,2}:\d{2}',              # bracket with HH:MM time
     re.IGNORECASE,
 )
 
