@@ -5,19 +5,20 @@ Usage:
   python src/pipeline.py [exports_dir] [options]
 
 Options:
-  --from-step N    Resume from step N (1-6), default 1
+  --from-step N    Resume from step N (1-7), default 1
   --only-step N    Run only step N
-  --scene SCENE_ID Process only this scene (step 5 only)
+  --scene SCENE_ID Process only this scene (step 6 only)
 
 Steps:
   1 - Purge       data/exports/    -> data/purged/
   2 - Translate   data/purged/     -> data/translated/
   3 - Subdivide   data/translated/ -> data/scenes/
-  4 - Synthesis   data/scenes/     -> data/lore/lore_how.yaml  (narrative + RP quality check)
+  4 - Clean       data/scenes/     (in-place: trim OOC edges, merge short scenes)
+  5 - Synthesis   data/scenes/     -> data/lore/lore_how.yaml
                                       data/rp_report.json      (non-RP scenes for review)
-  5 - Analyze     data/scenes/     -> data/analysis/{scene_id}/  (skips non-RP scenes)
+  6 - Analyze     data/scenes/     -> data/analysis/{scene_id}/
                                       data/lore/characters/ places/ concepts/
-  6 - Post        voice fingerprints + general syntheses (batch, after all scenes)
+  7 - Post        voice fingerprints + general syntheses (batch, after all scenes)
 """
 
 import argparse
@@ -31,6 +32,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from steps.purge         import run_purge
 from steps.translate     import run_translate
 from steps.subdivide     import run_subdivide
+from steps.clean         import run_clean
 from steps.synthesis     import run_synthesis
 from steps.analyze_context  import run_context
 from steps.analyze_entities import run_entities
@@ -51,7 +53,7 @@ LORE_DIR       = DATA_DIR / "lore"
 ANALYSIS_DIR   = DATA_DIR / "analysis"
 
 
-def run_step5(scene_files: list[Path], only_scene: str | None = None):
+def run_step6(scene_files: list[Path], only_scene: str | None = None):
     chars_dir    = LORE_DIR / "characters"
     places_dir   = LORE_DIR / "places"
     concepts_dir = LORE_DIR / "concepts"
@@ -68,7 +70,7 @@ def run_step5(scene_files: list[Path], only_scene: str | None = None):
         run_how(scene_file, ad, when, where, who, which, what, lore_dir=LORE_DIR)
 
 
-def run_step6(scene_files: list[Path], only_scene: str | None = None):
+def run_step7(scene_files: list[Path], only_scene: str | None = None):
     """Post-processing: voice fingerprints + general syntheses. Runs after all scenes."""
     chars_dir    = LORE_DIR / "characters"
     places_dir   = LORE_DIR / "places"
@@ -139,30 +141,37 @@ def run_pipeline(
                       report_path=DATA_DIR / "rp_report.json")
 
     if should_run(4):
-        print("\n== STEP 4 - SYNTHESIS ==")
-        scene_files = sorted(SCENES_DIR.glob("**/*.json"))
+        print("\n== STEP 4 - CLEAN ==")
+        run_clean(SCENES_DIR)
+
+    def _scene_files():
+        return sorted(p for p in SCENES_DIR.glob("**/*.json") if not p.name.startswith("_"))
+
+    if should_run(5):
+        print("\n== STEP 5 - SYNTHESIS ==")
+        scene_files = _scene_files()
         if not scene_files:
             print("  No scene files found. Run step 3 first.")
             return
         print(f"  {len(scene_files)} scenes to synthesize")
-        run_synthesis(SCENES_DIR, LORE_DIR, report_path=DATA_DIR / "rp_report.json")
+        run_synthesis(SCENES_DIR, LORE_DIR)
 
-    if should_run(5):
-        print("\n== STEP 5 - ANALYZE ==")
-        scene_files = sorted(SCENES_DIR.glob("**/*.json"))
+    if should_run(6):
+        print("\n== STEP 6 - ANALYZE ==")
+        scene_files = _scene_files()
         if not scene_files:
             print("  No scene files found. Run step 3 first.")
             return
         print(f"  {len(scene_files)} scenes to analyze")
-        run_step5(scene_files, only_scene=only_scene)
+        run_step6(scene_files, only_scene=only_scene)
 
-    if should_run(6):
-        print("\n== STEP 6 - POST (voice + generals) ==")
-        scene_files = sorted(SCENES_DIR.glob("**/*.json"))
+    if should_run(7):
+        print("\n== STEP 7 - POST (voice + generals) ==")
+        scene_files = _scene_files()
         if not scene_files:
             print("  No scene files found.")
             return
-        run_step6(scene_files, only_scene=only_scene)
+        run_step7(scene_files, only_scene=only_scene)
 
     print("\n== PIPELINE DONE ==")
 
@@ -172,11 +181,11 @@ if __name__ == "__main__":
     parser.add_argument("exports_dir", nargs="?", default="data/exports",
                         help="Raw exports directory (step 1 input)")
     parser.add_argument("--from-step", type=int, default=1, dest="from_step",
-                        help="Resume from step N (1-6)")
+                        help="Resume from step N (1-7)")
     parser.add_argument("--only-step", type=int, default=None, dest="only_step",
-                        help="Run only step N (1-6)")
+                        help="Run only step N (1-7)")
     parser.add_argument("--scene", type=str, default=None,
-                        help="Process only this scene ID (step 5)")
+                        help="Process only this scene ID (step 6)")
     parser.add_argument("--skip-translation", action="store_true", dest="skip_translation",
                         help="Skip LLM translation — use original content as-is (content_en = content)")
     args = parser.parse_args()

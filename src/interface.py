@@ -495,8 +495,8 @@ with gr.Blocks(title="RP_IA") as app:
                     scale=3,
                 )
                 from_step_slider = gr.Slider(
-                    minimum=1, maximum=6, step=1, value=1,
-                    label="From step  (1=purge 2=translate 3=subdivide 4=synthesis+rp 5=analyze 6=post)",
+                    minimum=1, maximum=7, step=1, value=1,
+                    label="From step  (1=purge 2=translate 3=subdivide 4=clean 5=synthesis 6=analyze 7=post)",
                     scale=1,
                 )
                 only_step_input = gr.Textbox(

@@ -158,58 +158,18 @@ JSON: {{"same_scene": true}} or {{"same_scene": false}}"""
 
 
 def _trim_rp_prefix(messages: list[dict]) -> list[dict]:
-    """
-    Cut the OOC prefix before the first narrative RP action (*...*).
-
-    Strategy:
-    1. Find the first message with a genuine *action* (3+ word content in asterisks).
-    2. If no prefix → return as-is.
-    3. Ask LLM: is the prefix the same scene as what follows, or different context?
-    4. If different context → cut at the *.
-    """
+    """Cut everything before the first genuine *action* (15+ chars). No LLM."""
     if not messages:
         return messages
-
-    # Find first genuine asterisk action (not a single word like *lève*)
     anchor = next(
         (i for i, m in enumerate(messages)
          if re.search(r'\*[^*]{15,}\*', m.get("content_en") or m.get("content", ""))),
         None,
     )
-
-    # No anchor or already at start → nothing to trim
     if not anchor:
         return messages
-
-    prefix = messages[:anchor]
-
-    # Quick pass: if the prefix already looks fully RP (long messages, no OOC) → keep
-    prefix_contents = [m.get("content_en") or m.get("content", "") for m in prefix]
-    ooc_count = sum(1 for c in prefix_contents if _OOC_PATTERNS.search(c))
-    avg_prefix_len = sum(len(c) for c in prefix_contents) / len(prefix_contents)
-
-    if ooc_count == 0 and avg_prefix_len > 80:
-        return messages   # prefix looks narrative, don't cut
-
-    # LLM context comparison — cheap call, binary answer
-    fmt_group = lambda msgs, n: "\n".join(
-        f"[{i}] {(m.get('content_en') or m.get('content', ''))[:120]}"
-        for i, m in enumerate(msgs[:n])
-    )
-    result = call_llm_json(
-        _CONTEXT_CHECK_PROMPT.format(
-            prefix=fmt_group(prefix, 8),
-            rp_open=fmt_group(messages[anchor:], 5),
-        ),
-        num_predict=20,
-        num_ctx=2048,
-    )
-
-    if not result.get("same_scene", True):
-        print(f"    [trim] {anchor} OOC prefix message(s) dropped (cut on *)")
-        return messages[anchor:]
-
-    return messages
+    print(f"    [trim] {anchor} prefix message(s) cut on *")
+    return messages[anchor:]
 
 
 # ── LLM split ─────────────────────────────────────────────────────────────────
@@ -342,7 +302,7 @@ def run_subdivide(translated_dir: Path, out_dir: Path,
             default=-1,
         ) + 1
 
-        accepted = rejected_small = rejected_rp = 0
+        accepted = rejected_rp = 0
         local_prev_messages = prev_messages   # carry across sub-scenes within same file
 
         for sub in sub_scenes:
@@ -352,12 +312,7 @@ def run_subdivide(translated_dir: Path, out_dir: Path,
             # Trim OOC prefix before any check
             sub = _trim_rp_prefix(sub)
 
-            # Filter 1: size
-            if len(sub) < MIN_MESSAGES:
-                rejected_small += 1
-                continue
-
-            # Filter 2: RP heuristic
+            # RP heuristic (no size filter — clean step handles short scenes)
             is_rp, rp_score, rp_flags = _heuristic_rp_check(sub)
             if not is_rp:
                 rejected_rp += 1
@@ -388,8 +343,7 @@ def run_subdivide(translated_dir: Path, out_dir: Path,
         prev_messages = local_prev_messages  # carry across files
 
         parts = [f" → {accepted} kept"]
-        if rejected_small: parts.append(f"{rejected_small} too short")
-        if rejected_rp:    parts.append(f"{rejected_rp} non-RP")
+        if rejected_rp: parts.append(f"{rejected_rp} non-RP")
         print(",  ".join(parts))
 
         manifest[fp.stem] = kept_ids

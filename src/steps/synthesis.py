@@ -75,7 +75,7 @@ def run_synthesis(scenes_dir: Path, lore_dir: Path) -> Path:
     lore_how    = _load_lore_how(lore_how_path)
     scenes_data = lore_how.get("scenes") or {}
 
-    scene_files = sorted(scenes_dir.glob("**/*.json"))
+    scene_files = sorted(p for p in scenes_dir.glob("**/*.json") if not p.name.startswith("_"))
     if not scene_files:
         print("  [lore_how] no scene files found")
         return lore_how_path
