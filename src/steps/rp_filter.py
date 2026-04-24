@@ -13,15 +13,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from llm import call_llm_json
-from steps.lore_sweep import sweep_context_lines
+from steps.synthesis import synthesis_context_block
 
 _PROMPT = """\
 You are a RP quality filter. Decide if this scene is genuine narrative roleplay.
 
-Known story entities (for reference):
-Characters: {sweep_chars}
-
-Places: {sweep_places}
+Known story context (characters, arcs, narrative axes — use to judge whether this scene fits the story):
+{story_context}
 
 A scene is NOT RP (is_rp: false) if it is mainly:
 - Out-of-character chat: players talking as themselves (scheduling, jokes, reactions as players)
@@ -77,8 +75,7 @@ def run_rp_filter(scenes_dir: Path, lore_dir: Path, analysis_dir: Path) -> dict:
     Filter all scenes. Returns stats dict.
     Writes per-scene rp_check.json + data/rp_report.json for manual review.
     """
-    sweep_chars  = sweep_context_lines(lore_dir, "characters", limit=15)
-    sweep_places = sweep_context_lines(lore_dir, "places", limit=10)
+    story_context = synthesis_context_block(lore_dir)
 
     report_path = analysis_dir.parent / "rp_report.json"
     report: dict = {}
@@ -107,8 +104,7 @@ def run_rp_filter(scenes_dir: Path, lore_dir: Path, analysis_dir: Path) -> dict:
 
         result = call_llm_json(
             _PROMPT.format(
-                sweep_chars=sweep_chars,
-                sweep_places=sweep_places,
+                story_context=story_context,
                 text=text,
             ),
             num_predict=256,
