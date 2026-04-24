@@ -24,11 +24,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-_SCENE_BREAK  = re.compile(r'^[\-_*=~]{3,}\s*$')
+_SCENE_BREAK  = re.compile(r'^[\-_*=~]{2,}\s*$')
 _EMOJI_CUSTOM = re.compile(r'<:\w+:\d+>')
 _MENTION      = re.compile(r'<@!?\d+>')
 _URL          = re.compile(r'https?://\S+')
 _NARRATIVE    = re.compile(r'[a-zA-ZÀ-ÿ0-9]{2,}')
+
+# Discord reply/quote: markdown blockquote OR bracketed date reference
+# e.g. "> original message" or "[15/01/2024]" or "[15 jan. 2024 à 20:30]"
+_DISCORD_QUOTE = re.compile(
+    r'^>\s+'                                              # markdown blockquote
+    r'|^\[\d{1,2}[\s/\.\-]\w',                           # [date] reference
+    re.IGNORECASE,
+)
 
 _SCENE_BREAK_SECS  = 1800  # 30 min → new scene
 _SESSION_END_SECS  = 3600  # 60 min → new session (= new scene)
@@ -56,6 +64,8 @@ def _should_drop(content: str) -> bool:
     if not s:
         return True
     if _SCENE_BREAK.match(s):
+        return True
+    if _DISCORD_QUOTE.match(s):
         return True
     if not _NARRATIVE.search(_clean(s)):
         return True

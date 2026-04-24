@@ -102,6 +102,43 @@ def _heuristic_rp_check(messages: list[dict]) -> tuple[bool, float, list[str]]:
     return is_rp, score, flags
 
 
+# ── Duplicate-opening remover ────────────────────────────────────────────────
+
+def _normalize(text: str) -> str:
+    return re.sub(r'\s+', ' ', text.strip().lower())
+
+
+def _drop_duplicate_opening(messages: list[dict], prev_messages: list[dict],
+                            check_start: int = 10) -> list[dict]:
+    """
+    Remove messages at the start of `messages` that duplicate any message
+    from the entire previous scene (not just its tail — the repeated line may
+    have appeared anywhere in the previous scene).
+    Stops at the first non-duplicate so only a contiguous opening prefix is removed.
+    """
+    if not prev_messages or not messages:
+        return messages
+
+    prev_set = {
+        _normalize(m.get("content_en") or m.get("content", ""))
+        for m in prev_messages
+    }
+    prev_set.discard("")
+
+    drop = 0
+    for m in messages[:check_start]:
+        t = _normalize(m.get("content_en") or m.get("content", ""))
+        if t and t in prev_set:
+            drop += 1
+        else:
+            break
+
+    if drop:
+        print(f"    [dedup] {drop} repeated opening message(s) removed")
+        return messages[drop:]
+    return messages
+
+
 # ── OOC prefix trimmer ───────────────────────────────────────────────────────
 
 _RP_START_PROMPT = """\
@@ -264,7 +301,8 @@ def run_subdivide(translated_dir: Path, out_dir: Path,
     if report_path.exists() and _is_valid_json(report_path):
         rp_report = json.loads(report_path.read_text(encoding="utf-8"))
 
-    produced: list[Path] = []
+    produced:  list[Path] = []
+    prev_messages: list[dict] = []   # last accepted messages — for cross-file dedup
 
     for fp in scene_files:
         stem      = fp.parent.name
@@ -277,6 +315,12 @@ def run_subdivide(translated_dir: Path, out_dir: Path,
                 sp = out_subdir / f"{sid}.json"
                 if sp.exists():
                     produced.append(sp)
+                    # Reload tail for dedup continuity even on skip
+                    try:
+                        data = json.loads(sp.read_text(encoding="utf-8"))
+                        prev_messages = data.get("messages", [])
+                    except Exception:
+                        pass
             continue
 
         if not _is_valid_json(fp):
@@ -292,7 +336,7 @@ def run_subdivide(translated_dir: Path, out_dir: Path,
 
         sub_scenes = _split(messages)
 
-        kept_ids:    list[str] = []
+        kept_ids: list[str] = []
         next_idx = max(
             (int(p.stem.rsplit("_", 1)[-1])
              for p in out_subdir.glob("*.json")
@@ -301,8 +345,12 @@ def run_subdivide(translated_dir: Path, out_dir: Path,
         ) + 1
 
         accepted = rejected_small = rejected_rp = 0
+        local_prev_messages = prev_messages   # carry across sub-scenes within same file
 
         for sub in sub_scenes:
+            # Remove repeated opening (vs previous scene tail)
+            sub = _drop_duplicate_opening(sub, local_prev_messages)
+
             # Trim OOC prefix before any check
             sub = _trim_rp_prefix(sub)
 
@@ -337,6 +385,9 @@ def run_subdivide(translated_dir: Path, out_dir: Path,
             kept_ids.append(scene_id)
             next_idx += 1
             accepted += 1
+            local_prev_messages = sub   # update tail for next sub-scene dedup
+
+        prev_messages = local_prev_messages  # carry across files
 
         parts = [f" → {accepted} kept"]
         if rejected_small: parts.append(f"{rejected_small} too short")
