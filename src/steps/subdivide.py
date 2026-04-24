@@ -104,31 +104,77 @@ def _heuristic_rp_check(messages: list[dict]) -> tuple[bool, float, list[str]]:
 
 # ── OOC prefix trimmer ───────────────────────────────────────────────────────
 
+_RP_START_PROMPT = """\
+These messages mix out-of-character (OOC) player chat with in-character roleplay.
+Find the index of the FIRST genuinely in-character RP message.
+
+RP messages: character dialogue ("..."), narrative scene descriptions, \
+character actions written in third person or as a named character.
+OOC messages: player reactions, scheduling, first-person casual remarks \
+("j'écoute...", "*lève les bras*", "je suis là", "ok prêt"), meta/rules talk.
+
+Return {{"rp_start": 4}} for the index, {{"rp_start": 0}} if RP starts immediately, \
+or {{"rp_start": null}} if no RP is found.
+
+Messages:
+{messages}"""
+
+
+def _find_rp_start(messages: list[dict], scan: int = 20) -> int | None:
+    """
+    Ask the LLM where the actual RP begins in the first `scan` messages.
+    Returns the start index, or None if no RP found.
+    Only called when the scene has a suspicious non-RP opening.
+    """
+    preview = messages[:scan]
+    lines   = "\n".join(
+        f"[{i}] {(m.get('content_en') or m.get('content', ''))[:120]}"
+        for i, m in enumerate(preview)
+    )
+    result = call_llm_json(
+        _RP_START_PROMPT.format(messages=lines),
+        num_predict=20,
+        num_ctx=2048,
+    )
+    idx = result.get("rp_start")
+    if idx is None:
+        return None
+    if isinstance(idx, int) and 0 <= idx < len(messages):
+        return idx
+    return None
+
+
 def _trim_rp_prefix(messages: list[dict]) -> list[dict]:
     """
-    Drop OOC prefix messages that precede the first RP action (*...*).
-
-    - If first asterisk is within the first 10 messages → always trim the prefix.
-    - If further in → only trim if the prefix is strongly OOC (≥ 40% OOC messages).
-    - If no asterisk at all → return as-is (RP check will handle it).
+    If the scene opens with OOC content, find where RP actually starts and trim the prefix.
+    Only scans the first 20 messages to detect the transition — avoids expensive calls
+    on scenes that are already RP from the start.
     """
-    first_rp = next(
-        (i for i, m in enumerate(messages)
-         if re.search(r'\*[^*]+\*', m.get("content_en") or m.get("content", ""))),
-        None,
+    # Quick heuristic: if the first message already looks like RP, skip the LLM call
+    first_content = messages[0].get("content_en") or messages[0].get("content", "") if messages else ""
+    first_is_rp = (
+        re.search(r'\*[^*]{10,}\*', first_content) or   # long asterisk action
+        len(first_content) > 150                          # long narrative opening
     )
-    if not first_rp:          # None (no asterisk) or 0 (already starts with RP)
+    if first_is_rp:
         return messages
 
-    prefix   = messages[:first_rp]
-    p_contents = [m.get("content_en") or m.get("content", "") for m in prefix]
-    ooc_ratio  = sum(1 for c in p_contents if _OOC_PATTERNS.search(c)) / first_rp
+    # Check if the opening looks OOC enough to warrant trimming
+    scan = min(20, len(messages))
+    prefix_contents = [
+        m.get("content_en") or m.get("content", "")
+        for m in messages[:scan]
+    ]
+    ooc_in_prefix = sum(1 for c in prefix_contents if _OOC_PATTERNS.search(c))
+    if ooc_in_prefix / scan < 0.2:
+        return messages   # opening looks fine, skip LLM call
 
-    if first_rp <= 10 or ooc_ratio >= 0.4:
-        print(f"    [trim] {first_rp} OOC prefix msg(s) dropped (ooc {ooc_ratio:.0%})")
-        return messages[first_rp:]
-
-    return messages
+    # LLM finds the exact transition point
+    start = _find_rp_start(messages, scan=scan)
+    if start is None or start == 0:
+        return messages
+    print(f"    [trim] dropped {start} OOC prefix message(s)")
+    return messages[start:]
 
 
 # ── LLM split ─────────────────────────────────────────────────────────────────
