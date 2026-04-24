@@ -102,6 +102,35 @@ def _heuristic_rp_check(messages: list[dict]) -> tuple[bool, float, list[str]]:
     return is_rp, score, flags
 
 
+# ── OOC prefix trimmer ───────────────────────────────────────────────────────
+
+def _trim_rp_prefix(messages: list[dict]) -> list[dict]:
+    """
+    Drop OOC prefix messages that precede the first RP action (*...*).
+
+    - If first asterisk is within the first 10 messages → always trim the prefix.
+    - If further in → only trim if the prefix is strongly OOC (≥ 40% OOC messages).
+    - If no asterisk at all → return as-is (RP check will handle it).
+    """
+    first_rp = next(
+        (i for i, m in enumerate(messages)
+         if re.search(r'\*[^*]+\*', m.get("content_en") or m.get("content", ""))),
+        None,
+    )
+    if not first_rp:          # None (no asterisk) or 0 (already starts with RP)
+        return messages
+
+    prefix   = messages[:first_rp]
+    p_contents = [m.get("content_en") or m.get("content", "") for m in prefix]
+    ooc_ratio  = sum(1 for c in p_contents if _OOC_PATTERNS.search(c)) / first_rp
+
+    if first_rp <= 10 or ooc_ratio >= 0.4:
+        print(f"    [trim] {first_rp} OOC prefix msg(s) dropped (ooc {ooc_ratio:.0%})")
+        return messages[first_rp:]
+
+    return messages
+
+
 # ── LLM split ─────────────────────────────────────────────────────────────────
 
 def _is_valid_json(path: Path) -> bool:
@@ -228,6 +257,9 @@ def run_subdivide(translated_dir: Path, out_dir: Path,
         accepted = rejected_small = rejected_rp = 0
 
         for sub in sub_scenes:
+            # Trim OOC prefix before any check
+            sub = _trim_rp_prefix(sub)
+
             # Filter 1: size
             if len(sub) < MIN_MESSAGES:
                 rejected_small += 1
