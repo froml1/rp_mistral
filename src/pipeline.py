@@ -32,6 +32,7 @@ from steps.purge         import run_purge
 from steps.translate     import run_translate
 from steps.subdivide     import run_subdivide
 from steps.lore_sweep    import run_lore_sweep
+from steps.synthesis     import run_synthesis
 from steps.rp_filter     import run_rp_filter, is_scene_rp
 from steps.analyze_context  import run_context
 from steps.analyze_entities import run_entities
@@ -40,7 +41,7 @@ from steps.analyze_how      import run_how
 from steps.analyze_voice    import run_voice
 from steps.general_lore  import (
     update_general_who, update_general_where, update_general_which,
-    update_general_what, update_general_how,
+    update_general_what,
 )
 
 DATA_DIR       = ROOT / "data"
@@ -73,8 +74,8 @@ def run_step6(scene_files: list[Path], only_scene: str | None = None):
 
         when, where = run_context(scene_file, ad, places_dir, lore_dir=LORE_DIR)
         who, which  = run_entities(scene_file, ad, chars_dir, concepts_dir, lore_dir=LORE_DIR)
-        what        = run_what(scene_file, ad, when, where, who, which)
-        run_how(scene_file, ad, when, where, who, which, what)
+        what        = run_what(scene_file, ad, when, where, who, which, lore_dir=LORE_DIR)
+        run_how(scene_file, ad, when, where, who, which, what, lore_dir=LORE_DIR)
 
     if skipped_rp:
         print(f"\n  [analyze] {skipped_rp} non-RP scene(s) skipped — see data/rp_report.json")
@@ -125,9 +126,7 @@ def run_step7(scene_files: list[Path], only_scene: str | None = None):
         if what_path.exists():
             what = json.loads(what_path.read_text(encoding="utf-8"))
             update_general_what(LORE_DIR, scene_id, what)
-        if how_path.exists():
-            how = json.loads(how_path.read_text(encoding="utf-8"))
-            update_general_how(LORE_DIR, scene_id, how)
+        # general_how replaced by synthesis.yaml (generated in step 4)
 
 
 def run_pipeline(
@@ -154,13 +153,15 @@ def run_pipeline(
         run_subdivide(TRANSLATED_DIR, SCENES_DIR, purged_dir=PURGED_DIR)
 
     if should_run(4):
-        print("\n== STEP 4 - LORE SWEEP ==")
+        print("\n== STEP 4 - SWEEP + SYNTHESIS ==")
         scene_files = sorted(SCENES_DIR.glob("**/*.json"))
         if not scene_files:
             print("  No scene files found. Run step 3 first.")
             return
         print(f"  {len(scene_files)} scenes to sweep")
         run_lore_sweep(SCENES_DIR, LORE_DIR)
+        print("  Building narrative synthesis…")
+        run_synthesis(LORE_DIR)
 
     if should_run(5):
         print("\n== STEP 5 - RP FILTER ==")

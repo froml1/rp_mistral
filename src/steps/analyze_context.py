@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from llm import call_llm_json
 from steps.manual_lore import load_manual_place, load_all_manual_places, merge_manual_into_place
 from steps.lore_sweep import sweep_context_lines
+from steps.synthesis import synthesis_context_block
 from lore_summary import update_summary
 try:
     from store import upsert as _store_upsert
@@ -30,6 +31,10 @@ def _is_valid_json(path: Path) -> bool:
 _PROMPT = """\
 Analyze the TEMPORAL CONTEXT and LOCATIONS of this RP scene in one pass.
 IMPORTANT: if context seams too informal ignore analyse, return struct with empty fields (maybe a casual discussion)
+
+STORY SYNTHESIS (use to anchor location identity — do not confuse distinct places):
+{synthesis}
+
 Known locations (may be incomplete):
 {known_yaml}
 
@@ -161,7 +166,14 @@ def run_context(scene_file: Path, analysis_dir: Path, places_dir: Path, lore_dir
         known_yaml = sweep_context_lines(lore_dir, "places", limit=15) or "none"
     else:
         known_yaml = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known.items()) or "none"
-    result = call_llm_json(_PROMPT.format(known_yaml=known_yaml, text=text), num_predict=1024)
+    result = call_llm_json(
+        _PROMPT.format(
+            synthesis=synthesis_context_block(lore_dir) if lore_dir else "none",
+            known_yaml=known_yaml,
+            text=text,
+        ),
+        num_predict=1024,
+    )
 
     # — When —
     raw_when = result.get("when") or {}

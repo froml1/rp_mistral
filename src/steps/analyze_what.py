@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
 from steps.manual_lore import load_manual_events, merge_manual_into_what
+from steps.synthesis import synthesis_context_block
 
 
 def _is_valid_json(path: Path) -> bool:
@@ -21,6 +22,10 @@ _PROMPT = """\
 Based on the analysis context below, produce an EXHAUSTIVE list of everything that happens in this scene.
 
 IMPORTANT: if context seams too informal ignore analyse, return struct with empty fields (maybe a casual discussion)
+
+PRIOR SCENE CONTEXT (what happened before — use to avoid misidentifying characters or events):
+{narrative_context}
+
 TEMPORAL CONTEXT:
 {when}
 
@@ -63,7 +68,7 @@ def _scene_text(messages: list[dict]) -> str:
     )
 
 
-def run_what(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: dict, which: dict) -> dict:
+def run_what(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: dict, which: dict, lore_dir: Path | None = None) -> dict:
     out_path = analysis_dir / "what.json"
     if out_path.exists() and _is_valid_json(out_path):
         print(f"    [skip] what already done")
@@ -77,20 +82,24 @@ def run_what(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who:
     with open(scene_file, encoding="utf-8") as f:
         scene = json.load(f)
 
+    scene_id = scene["scene_id"]
     text = _scene_text(scene["messages"])
 
     when_ctx  = f"Time of day: {when.get('time_of_day')}. Duration: {when.get('duration')}. {when.get('summary', '')}"
     where_ctx = f"Locations: {', '.join(where.get('locations') or [])}. Changes: {where.get('location_changes')}"
     who_ctx   = f"Characters present: {', '.join(who.get('characters') or [])}"
     which_ctx = ", ".join(which.get("concepts") or []) or "none identified"
+    narrative_ctx = synthesis_context_block(lore_dir) if lore_dir else "none"
 
     result = call_llm_json(
-        _PROMPT.format(when=when_ctx, where=where_ctx, who=who_ctx, which=which_ctx, text=text),
+        _PROMPT.format(
+            narrative_context=narrative_ctx,
+            when=when_ctx, where=where_ctx, who=who_ctx, which=which_ctx, text=text,
+        ),
         num_predict=2048,
         num_ctx=8192,
     )
 
-    scene_id = scene["scene_id"]
     output = {
         "summary": str(result.get("summary") or ""),
         "events":  [

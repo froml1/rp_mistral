@@ -17,17 +17,19 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from llm import call_llm_json
 
 _PROMPT = """\
-Quick entity scan of this RP scene. Only what is explicitly visible — do not invent.
+Quick entity and narrative scan of this RP scene. Only what is explicitly visible — do not invent.
 
 For each CHARACTER present: canonical_name (lowercase full name), description (1-2 sentences on role/appearance/personality), appellations (every name form used in the text).
 For each LOCATION: canonical_name (lowercase), description (1-2 sentences), appellations.
 For each named CONCEPT (faction, artifact, law, system, ideology, ritual): canonical_name, type, description (1 sentence).
+narrative: one sentence summarising what happens in this scene and who is involved (key events + character dynamics).
 
 JSON:
 {{
   "characters": [{{"name": "", "description": "", "appellations": []}}],
   "places":     [{{"name": "", "description": "", "appellations": []}}],
-  "concepts":   [{{"name": "", "type": "", "description": ""}}]
+  "concepts":   [{{"name": "", "type": "", "description": ""}}],
+  "narrative":  ""
 }}
 
 Scene:
@@ -46,6 +48,11 @@ def _scene_text(messages: list[dict]) -> str:
 
 def _merge_bucket(bucket: dict, items: list, scene_id: str, *, with_type: bool = False):
     for item in (items or []):
+        # LLM sometimes returns strings instead of dicts
+        if isinstance(item, str):
+            item = {"name": item}
+        if not isinstance(item, dict):
+            continue
         name = (item.get("name") or "").strip().lower()
         if not name:
             continue
@@ -57,7 +64,7 @@ def _merge_bucket(bucket: dict, items: list, scene_id: str, *, with_type: bool =
 
         existing_apps = {a.lower() for a in entry["appellations"]}
         for app in (item.get("appellations") or []):
-            if app.lower() not in existing_apps:
+            if isinstance(app, str) and app.lower() not in existing_apps:
                 entry["appellations"].append(app.lower())
                 existing_apps.add(app.lower())
 
@@ -119,6 +126,10 @@ def run_lore_sweep(scenes_dir: Path, lore_dir: Path) -> Path:
         _merge_bucket(places_bucket,   result.get("places")     or [], scene_id)
         _merge_bucket(concepts_bucket, result.get("concepts")   or [], scene_id, with_type=True)
 
+        narrative = (result.get("narrative") or "").strip()
+        if narrative:
+            registry.setdefault("narratives", {})[scene_id] = narrative
+
         new_count += 1
         print(
             f"    [sweep] {scene_id}: "
@@ -126,6 +137,9 @@ def run_lore_sweep(scenes_dir: Path, lore_dir: Path) -> Path:
             f"{len(result.get('places') or [])} places, "
             f"{len(result.get('concepts') or [])} concepts"
         )
+
+        # Save after each scene so interruption doesn't lose progress
+        sweep_path.write_text(yaml.dump(registry, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
     lore_dir.mkdir(parents=True, exist_ok=True)
     sweep_path.write_text(yaml.dump(registry, allow_unicode=True, sort_keys=False), encoding="utf-8")
@@ -140,6 +154,29 @@ def load_sweep(lore_dir: Path) -> dict:
     if not path.exists():
         return {}
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def sweep_narrative_context(lore_dir: Path, current_scene_id: str, window: int = 10) -> str:
+    """
+    Return narrative notes from scenes before current_scene_id (sorted).
+    Used as stable pre-computed context in analyze_how and analyze_what.
+    """
+    sweep = load_sweep(lore_dir)
+    narratives: dict[str, str] = sweep.get("narratives") or {}
+    if not narratives:
+        return "none yet"
+
+    sorted_ids = sorted(narratives.keys())
+    try:
+        pos = sorted_ids.index(current_scene_id)
+    except ValueError:
+        pos = len(sorted_ids)
+
+    nearby = sorted_ids[max(0, pos - window): pos]
+    if not nearby:
+        return "none yet"
+
+    return "\n".join(f"- {sid}: {narratives[sid]}" for sid in nearby)
 
 
 def sweep_context_lines(lore_dir: Path, entity_type: str, limit: int = 20) -> str:

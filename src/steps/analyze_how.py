@@ -9,6 +9,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
+from steps.synthesis import synthesis_context_block
 
 
 def _is_valid_json(path: Path) -> bool:
@@ -133,7 +134,7 @@ def _format_where_details(where: dict) -> str:
     return "\n".join(parts)
 
 
-def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: dict, which: dict, what: dict) -> dict:
+def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: dict, which: dict, what: dict, lore_dir: Path | None = None) -> dict:
     out_path = analysis_dir / "how.json"
     if out_path.exists() and _is_valid_json(out_path):
         print(f"    [skip] how already done")
@@ -149,12 +150,15 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
 
     scene_id = scene["scene_id"]
     text     = _scene_text(scene["messages"])
-    how_ctx  = _load_how_context()
 
-    recent_ctx = "\n".join(
-        f"- {sid}: {synth}"
-        for sid, synth in list(how_ctx.items())[-5:]
-    ) or "none yet"
+    # Prefer pre-computed synthesis (stable, full-corpus view) over rolling how_context
+    if lore_dir is not None:
+        recent_ctx = synthesis_context_block(lore_dir)
+    else:
+        how_ctx = _load_how_context()
+        recent_ctx = "\n".join(
+            f"- {sid}: {synth}" for sid, synth in list(how_ctx.items())[-5:]
+        ) or "none yet"
 
     events_summary = "; ".join(
         e.get("description", "") for e in (what.get("events") or [])[:10]

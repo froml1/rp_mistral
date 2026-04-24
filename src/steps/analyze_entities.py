@@ -15,6 +15,7 @@ from steps.manual_lore import (
     load_manual_concept, load_all_manual_concepts, merge_manual_into_concept,
 )
 from steps.lore_sweep import sweep_context_lines
+from steps.synthesis import synthesis_context_block
 from lore_summary import update_summary, summaries_for_dir
 try:
     from store import upsert as _store_upsert
@@ -49,6 +50,9 @@ _PROMPT = """\
 Analyze the CHARACTERS and CONCEPTS present in this RP scene in one pass.
 IMPORTANT: Discord authors (who write the messages) are NOT characters. Authors to ignore: {authors}
 IMPORTANT: if the scene is too informal / OOC, return struct with empty character list.
+
+STORY SYNTHESIS (use to anchor character identity — do not merge distinct characters):
+{synthesis}
 
 Discord authors and what they write (use this to identify which author plays which character):
 {author_hints}
@@ -363,6 +367,7 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
     result = call_llm_json(
         _PROMPT.format(
             authors=", ".join(authors),
+            synthesis=synthesis_context_block(lore_dir) if lore_dir else "none",
             author_hints=_author_hints(messages),
             known_chars_yaml=known_chars_yaml,
             known_concepts_yaml=known_concepts_yaml,

@@ -113,6 +113,17 @@ def run_subdivide(translated_dir: Path, out_dir: Path, purged_dir: Path | None =
             (file_out_dir / _PROGRESS_FILE).unlink(missing_ok=True)
 
         manifest = _load_manifest(file_out_dir)
+        processed_tmp = manifest.get("processed", {})
+        manifest_count = sum(processed_tmp.values())
+        existing_count = sum(1 for f in file_out_dir.glob("*.json") if f.name != _PROGRESS_FILE)
+
+        # Scene files deleted but manifest still claims them → full reset to avoid wrong scene_idx
+        if manifest_count > 0 and existing_count < manifest_count:
+            print(f"  [reset] {fp.name}: {existing_count}/{manifest_count} scene files present — resetting")
+            for f in file_out_dir.glob("*.json"):
+                f.unlink()
+            (file_out_dir / _PROGRESS_FILE).unlink(missing_ok=True)
+            manifest = {}
 
         if manifest.get("done"):
             existing = sorted(f for f in file_out_dir.glob("*.json") if f.name != _PROGRESS_FILE)
