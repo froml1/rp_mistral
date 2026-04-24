@@ -493,13 +493,13 @@ with gr.Blocks(title="RP_IA") as app:
                     scale=3,
                 )
                 from_step_slider = gr.Slider(
-                    minimum=1, maximum=4, step=1, value=1,
-                    label="From step",
+                    minimum=1, maximum=7, step=1, value=1,
+                    label="From step  (1=purge 2=translate 3=subdivide 4=sweep 5=rp-filter 6=analyze 7=post)",
                     scale=1,
                 )
                 only_step_input = gr.Textbox(
                     value="",
-                    label="Only step (blank = all)",
+                    label="Only step (blank = all, 1-7)",
                     scale=1,
                 )
                 scene_input = gr.Textbox(
