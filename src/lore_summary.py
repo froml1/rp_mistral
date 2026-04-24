@@ -28,7 +28,11 @@ def make_char_summary(data: dict) -> str:
         parts.append("locs: " + ", ".join(locs))
     rels = (data.get("relations") or [])[:2]
     if rels:
-        parts.append("rels: " + ", ".join(rels))
+        rel_strs = [
+            f"{r['character']} : {r.get('relation', '')}" if isinstance(r, dict) else str(r)
+            for r in rels
+        ]
+        parts.append("rels: " + ", ".join(rel_strs))
     ep = data.get("emotional_polarity") or {}
     emo = (ep.get("dominant_emotions") or [])[:2]
     if emo:

@@ -23,26 +23,26 @@ def _is_valid_json(path: Path) -> bool:
 _PROMPT = """\
 Analyze the CHARACTERS in this RP scene.
 
-IMPORTANT: author (Discord users who write the scene in field author) are NOT characters, even if figure in content. Author to ignore: {authors}
-    in content, author figure out before first :, real scene text afterward. Author is usefull to match character played as main player.
-    Beware : a character can be mentionned by an author but not played. 
+IMPORTANT: Discord authors (who write the messages) are NOT characters. Authors to ignore as characters: {authors}
+IMPORTANT: if the scene is too informal / OOC, return struct with empty character list.
+IMPORTANT: if an unknown name appears, try to match it to a known character; if you cannot, ignore it.
 
-IMPORTANT: if context seams too informal ignore analyse, return struct with empty fields (maybe a casual discussion)
-IMPORTANT: if unknown character identified try to match on previous characters inputed, and try to identify wich one, if can't ignore.
+Discord authors and what they write (use this to identify which author plays which character):
+{author_hints}
 
-Known information about characters (may be incomplete):
+Known characters (may be incomplete):
 {known_yaml}
 
-For each character (not author) present or active in this scene, extract:
+For each character (not author) active in this scene, extract:
 
 IDENTITY
 - canonical_name: full name in lowercase (e.g. "lena marchal")
+- author: Discord username who plays this character (e.g. "yaya") — pick from the author hints above
 - appellations: all names/references excluding pronouns (e.g. ["lena", "miss marchal", "the chrome mask"])
 - description_physical: physical appearance details
-- join : occupation or social role
-- main_locations: places associated with this character 
-- relations: relation shared with other characters with relation type
-- author: who's writing message content (e.g. ["Yaya", "Zyu"])
+- job: occupation or social role
+- main_locations: places associated with this character
+- relations: relationships with other characters, each as {{"character": "name", "relation": "type"}} (e.g. frère, allié, ennemi)
 
 PSYCHOLOGY
 - description_psychological: general personality and behavior summary
@@ -111,7 +111,7 @@ JSON:
     "description_physical": "",
     "job": "",
     "main_locations": [],
-    "relations": [],
+    "relations": [{{"character": "", "relation": ""}}],
     "description_psychological": "",
     "likes": [],
     "dislikes": [],
@@ -297,7 +297,7 @@ def _merge_char(existing: dict, extracted: dict, scene_id: str) -> dict:
     _merge_list(merged["likes"],     extracted.get("likes") or [])
     _merge_list(merged["dislikes"],  extracted.get("dislikes") or [])
     _merge_list(merged["main_locations"], extracted.get("main_locations") or [])
-    _merge_list(merged["relations"], extracted.get("relations") or [])
+    merged["relations"] = _merge_relations(merged["relations"], extracted.get("relations") or [])
     _merge_list(merged["misc"],      extracted.get("misc") or [])
 
     merged["emotional_polarity"] = _merge_emotional_polarity(
@@ -318,10 +318,36 @@ def _merge_char(existing: dict, extracted: dict, scene_id: str) -> dict:
 
 def _scene_text(messages: list[dict]) -> str:
     return "\n".join(
-        f"{(m.get('author') or {}).get('name', '?') if isinstance(m.get('author'), dict) else m.get('author', '?')}: "
+        f"[{(m.get('author') or {}).get('name', '?') if isinstance(m.get('author'), dict) else m.get('author', '?')}]: "
         f"{m.get('content_en') or m.get('content', '')}"
         for m in messages
     )
+
+
+def _author_hints(messages: list[dict]) -> str:
+    """Pre-compute author→content snippets so the LLM can match author↔character reliably."""
+    from collections import defaultdict
+    groups: dict[str, list[str]] = defaultdict(list)
+    for m in messages:
+        name = (m.get("author") or {}).get("name", "") if isinstance(m.get("author"), dict) else str(m.get("author", ""))
+        content = (m.get("content_en") or m.get("content", "")).strip()
+        if name and content:
+            groups[name].append(content[:70])
+    return "\n".join(f"- {a}: {' / '.join(snippets[:3])}" for a, snippets in groups.items()) or "unknown"
+
+
+def _merge_relations(existing: list, new_rels: list) -> list:
+    """Merge structured relations [{character, relation}]. Dedup by (character, relation)."""
+    result = [r for r in existing if isinstance(r, dict) and r.get("character")]
+    seen = {(r["character"].lower(), r.get("relation", "").lower()) for r in result}
+    for r in (new_rels or []):
+        if not isinstance(r, dict) or not r.get("character"):
+            continue
+        key = (r["character"].lower(), r.get("relation", "").lower())
+        if key not in seen:
+            result.append({"character": r["character"].lower(), "relation": r.get("relation", "").lower()})
+            seen.add(key)
+    return result
 
 
 def run_who(scene_file: Path, analysis_dir: Path, chars_dir: Path) -> dict:
@@ -365,7 +391,12 @@ def run_who(scene_file: Path, analysis_dir: Path, chars_dir: Path) -> dict:
 
     known_yaml = yaml.dump(known, allow_unicode=True) if known else "none"
     result = call_llm_json(
-        _PROMPT.format(authors=", ".join(authors), known_yaml=known_yaml, text=text),
+        _PROMPT.format(
+            authors=", ".join(authors),
+            author_hints=_author_hints(messages),
+            known_yaml=known_yaml,
+            text=text,
+        ),
         num_predict=2048,
     )
 
