@@ -31,7 +31,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from steps.purge         import run_purge
 from steps.translate     import run_translate
 from steps.subdivide     import run_subdivide
-from steps.synthesis     import run_synthesis, is_scene_rp
+from steps.synthesis     import run_synthesis
 from steps.analyze_context  import run_context
 from steps.analyze_entities import run_entities
 from steps.analyze_what     import run_what
@@ -56,27 +56,16 @@ def run_step5(scene_files: list[Path], only_scene: str | None = None):
     places_dir   = LORE_DIR / "places"
     concepts_dir = LORE_DIR / "concepts"
 
-    skipped_rp = 0
     for scene_file in sorted(scene_files):
         scene_id = scene_file.stem
         if only_scene and scene_id != only_scene:
             continue
-
-        if not is_scene_rp(LORE_DIR, scene_id):
-            print(f"\n  [skip non-RP] {scene_id}")
-            skipped_rp += 1
-            continue
-
         print(f"\n  [{scene_id}]")
         ad = ANALYSIS_DIR / scene_id
-
         when, where = run_context(scene_file, ad, places_dir, lore_dir=LORE_DIR)
         who, which  = run_entities(scene_file, ad, chars_dir, concepts_dir, lore_dir=LORE_DIR)
         what        = run_what(scene_file, ad, when, where, who, which, lore_dir=LORE_DIR)
         run_how(scene_file, ad, when, where, who, which, what, lore_dir=LORE_DIR)
-
-    if skipped_rp:
-        print(f"\n  [analyze] {skipped_rp} non-RP scene(s) skipped — see data/rp_report.json")
 
 
 def run_step6(scene_files: list[Path], only_scene: str | None = None):
@@ -88,8 +77,6 @@ def run_step6(scene_files: list[Path], only_scene: str | None = None):
     for scene_file in sorted(scene_files):
         scene_id = scene_file.stem
         if only_scene and scene_id != only_scene:
-            continue
-        if not is_scene_rp(LORE_DIR, scene_id):
             continue
         ad = ANALYSIS_DIR / scene_id
         who_path = ad / "who.json"
@@ -115,8 +102,6 @@ def run_step6(scene_files: list[Path], only_scene: str | None = None):
     for scene_file in sorted(scene_files):
         scene_id = scene_file.stem
         if only_scene and scene_id != only_scene:
-            continue
-        if not is_scene_rp(LORE_DIR, scene_id):
             continue
         ad = ANALYSIS_DIR / scene_id
         what_path = ad / "what.json"
@@ -150,7 +135,8 @@ def run_pipeline(
 
     if should_run(3):
         print("\n== STEP 3 - SUBDIVIDE ==")
-        run_subdivide(TRANSLATED_DIR, SCENES_DIR, purged_dir=PURGED_DIR)
+        run_subdivide(TRANSLATED_DIR, SCENES_DIR, purged_dir=PURGED_DIR,
+                      report_path=DATA_DIR / "rp_report.json")
 
     if should_run(4):
         print("\n== STEP 4 - SYNTHESIS ==")

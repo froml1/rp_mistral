@@ -1,6 +1,16 @@
-"""Step 3 - Subdivide: LLM coherence split on per-scene files from translate."""
+"""
+Step 3 - Subdivide: LLM coherence split + heuristic RP filter.
+
+For each scene file from translate:
+  1. LLM detects all scene boundaries in one pass → N sub-scenes
+  2. Drop sub-scenes with < 20 messages
+  3. Drop sub-scenes that fail the heuristic RP check
+  4. Write surviving sub-scenes to out_dir/{stem}/
+  5. Append rejected scenes to rp_report.json for manual review
+"""
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -27,7 +37,72 @@ Messages (first 150 chars each):
 {messages}"""
 
 _MANIFEST = "_manifest.json"
+MIN_MESSAGES = 20
 
+# ── Heuristic RP check ────────────────────────────────────────────────────────
+
+_OOC_PATTERNS = re.compile(
+    r'\b(lol|lmao|mdr|xd|haha|hihi|ahah|irl|ooc|brb|afk|ok\s|okay|'
+    r'ce\s+soir|demain|ce\s+week|disponible|dispo|pas\s+là|absent|'
+    r'on\s+joue|on\s+reporte|on\s+reprend|prêt\b|ready\b|'
+    r'désolé\b|sorry\b|connexion|internet|reboot|bug\s+technique)\b',
+    re.IGNORECASE,
+)
+
+
+def _heuristic_rp_check(messages: list[dict]) -> tuple[bool, float, list[str]]:
+    """
+    Score RP quality from observable text signals. No LLM.
+
+      + *asterisk actions*        → strongest marker
+      + avg message length        → narrative depth
+      + quoted dialogue           → in-character speech
+      - OOC keyword density       → meta/casual talk
+    """
+    contents = [
+        (m.get("content_en") or m.get("content") or "").strip()
+        for m in messages
+    ]
+    contents = [c for c in contents if c]
+    if not contents:
+        return False, 0.0, ["no_narrative"]
+
+    n         = len(contents)
+    full_text = "\n".join(contents)
+
+    asterisk_msgs  = sum(1 for c in contents if re.search(r'\*[^*]+\*', c))
+    asterisk_ratio = asterisk_msgs / n
+    avg_len        = sum(len(c) for c in contents) / n
+    has_quotes     = bool(re.search(r'[«»""][^"«»""]{5,}[«»""]', full_text))
+    ooc_msgs       = sum(1 for c in contents if _OOC_PATTERNS.search(c))
+    ooc_ratio      = ooc_msgs / n
+
+    score = 0.0
+    if asterisk_ratio >= 0.4:   score += 0.55
+    elif asterisk_ratio >= 0.15: score += 0.35
+    elif asterisk_ratio >= 0.05: score += 0.15
+
+    if avg_len >= 120:   score += 0.25
+    elif avg_len >= 60:  score += 0.15
+    elif avg_len >= 30:  score += 0.05
+
+    if has_quotes: score += 0.10
+
+    if ooc_ratio >= 0.5:    score -= 0.40
+    elif ooc_ratio >= 0.25: score -= 0.20
+    elif ooc_ratio >= 0.10: score -= 0.05
+
+    score  = round(max(0.0, min(1.0, score)), 3)
+    is_rp  = score >= 0.5
+    flags: list[str] = []
+    if ooc_ratio >= 0.3:               flags.append("ooc")
+    if asterisk_ratio == 0 and avg_len < 80: flags.append("no_narrative")
+    if avg_len < 40 and not flags:     flags.append("too_casual")
+
+    return is_rp, score, flags
+
+
+# ── LLM split ─────────────────────────────────────────────────────────────────
 
 def _is_valid_json(path: Path) -> bool:
     try:
@@ -40,14 +115,14 @@ def _is_valid_json(path: Path) -> bool:
 def _scene_text(messages: list[dict]) -> str:
     lines = []
     for i, msg in enumerate(messages):
-        author = msg.get("author", {})
-        name = author.get("name", "?") if isinstance(author, dict) else str(author)
+        author  = msg.get("author", {})
+        name    = author.get("name", "?") if isinstance(author, dict) else str(author)
         content = (msg.get("content_en") or msg.get("content", ""))[:150]
         lines.append(f"[{i}] {name}: {content}")
     return "\n".join(lines)
 
 
-def _subdivide(messages: list[dict]) -> list[list[dict]]:
+def _split(messages: list[dict]) -> list[list[dict]]:
     if len(messages) < 4:
         return [messages]
 
@@ -55,28 +130,26 @@ def _subdivide(messages: list[dict]) -> list[list[dict]]:
         _SPLIT_PROMPT.format(messages=_scene_text(messages)),
         num_predict=200,
     )
+    raw   = data.get("boundaries") or []
+    reasons = data.get("reasons") or []
+    bounds  = sorted(set(b for b in raw if isinstance(b, int) and 1 <= b < len(messages)))
 
-    raw_boundaries = data.get("boundaries") or []
-    reasons        = data.get("reasons") or []
-    boundaries = sorted(set(
-        b for b in raw_boundaries
-        if isinstance(b, int) and 1 <= b < len(messages)
-    ))
-
-    if not boundaries:
+    if not bounds:
         return [messages]
 
-    for i, b in enumerate(boundaries):
+    for i, b in enumerate(bounds):
         reason = reasons[i] if i < len(reasons) else ""
         print(f"    split [{b}]" + (f" — {reason}" if reason else ""))
 
     segments, prev = [], 0
-    for b in boundaries:
+    for b in bounds:
         segments.append(messages[prev:b])
         prev = b
     segments.append(messages[prev:])
     return [s for s in segments if s]
 
+
+# ── Manifest helpers ──────────────────────────────────────────────────────────
 
 def _load_manifest(out_dir: Path) -> dict:
     mf = out_dir / _MANIFEST
@@ -94,28 +167,36 @@ def _save_manifest(out_dir: Path, manifest: dict):
     )
 
 
-def run_subdivide(translated_dir: Path, out_dir: Path, purged_dir: Path | None = None) -> list[Path]:
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def run_subdivide(translated_dir: Path, out_dir: Path,
+                  purged_dir: Path | None = None,
+                  report_path: Path | None = None) -> list[Path]:
     """
-    For each scene file in translated_dir/**/*.json, run LLM coherence split.
-    Input scene files are already time-gap separated by purge.
-    May produce multiple output files per input if a split is detected.
-    Output: out_dir/{stem}/{scene_id}.json
+    Split each translated scene file by narrative coherence.
+    Filter sub-scenes: < 20 messages or non-RP → rejected, logged to rp_report.json.
     """
     scene_files = sorted(translated_dir.glob("**/*.json"))
     if not scene_files:
         print(f"  No translated scene files found in {translated_dir}")
         return []
 
-    produced = []
+    if report_path is None:
+        report_path = out_dir.parent / "rp_report.json"
+
+    # Load existing report so we accumulate across runs
+    rp_report: dict = {}
+    if report_path.exists() and _is_valid_json(report_path):
+        rp_report = json.loads(report_path.read_text(encoding="utf-8"))
+
+    produced: list[Path] = []
+
     for fp in scene_files:
-        # Output subdir mirrors the translated subdir name
-        stem     = fp.parent.name          # e.g. "channel_rp"
+        stem      = fp.parent.name
         out_subdir = out_dir / stem
         out_subdir.mkdir(parents=True, exist_ok=True)
+        manifest  = _load_manifest(out_subdir)
 
-        manifest = _load_manifest(out_subdir)
-
-        # Skip if this input scene was already processed
         if fp.stem in manifest:
             for sid in manifest[fp.stem]:
                 sp = out_subdir / f"{sid}.json"
@@ -134,29 +215,39 @@ def run_subdivide(translated_dir: Path, out_dir: Path, purged_dir: Path | None =
         source   = scene.get("source", fp.name)
         print(f"  {fp.name} ({len(messages)} msgs)", end="")
 
-        sub_scenes = _subdivide(messages)
-        sub_scenes = [s for s in sub_scenes if len(s) >= 20]
+        sub_scenes = _split(messages)
 
-        if not sub_scenes:
-            print(f" → all sub-scenes < 20 msgs, skipped")
-            manifest[fp.stem] = []
-            _save_manifest(out_subdir, manifest)
-            continue
-        elif len(sub_scenes) == 1:
-            print(" → 1 scene")
-        else:
-            print(f" → {len(sub_scenes)} sub-scenes")
+        kept_ids:    list[str] = []
+        next_idx = max(
+            (int(p.stem.rsplit("_", 1)[-1])
+             for p in out_subdir.glob("*.json")
+             if p.name != _MANIFEST and p.stem.rsplit("_", 1)[-1].isdigit()),
+            default=-1,
+        ) + 1
 
-        # Count existing scene files to assign sequential IDs without collision
-        existing_ids = [
-            int(p.stem.rsplit("_", 1)[-1])
-            for p in out_subdir.glob("*.json")
-            if p.name != _MANIFEST and p.stem.rsplit("_", 1)[-1].isdigit()
-        ]
-        next_idx = max(existing_ids, default=-1) + 1
+        accepted = rejected_small = rejected_rp = 0
 
-        written_ids = []
         for sub in sub_scenes:
+            # Filter 1: size
+            if len(sub) < MIN_MESSAGES:
+                rejected_small += 1
+                continue
+
+            # Filter 2: RP heuristic
+            is_rp, rp_score, rp_flags = _heuristic_rp_check(sub)
+            if not is_rp:
+                rejected_rp += 1
+                tmp_id = f"{stem}_{next_idx:03d}"
+                rp_report[tmp_id] = {
+                    "source":   source,
+                    "rp_score": rp_score,
+                    "rp_flags": rp_flags,
+                    "n_msgs":   len(sub),
+                    "preview":  (sub[0].get("content_en") or sub[0].get("content", ""))[:120],
+                }
+                next_idx += 1
+                continue
+
             scene_id   = f"{stem}_{next_idx:03d}"
             scene_path = out_subdir / f"{scene_id}.json"
             scene_path.write_text(
@@ -165,10 +256,22 @@ def run_subdivide(translated_dir: Path, out_dir: Path, purged_dir: Path | None =
                 encoding="utf-8",
             )
             produced.append(scene_path)
-            written_ids.append(scene_id)
+            kept_ids.append(scene_id)
             next_idx += 1
+            accepted += 1
 
-        manifest[fp.stem] = written_ids
+        parts = [f" → {accepted} kept"]
+        if rejected_small: parts.append(f"{rejected_small} too short")
+        if rejected_rp:    parts.append(f"{rejected_rp} non-RP")
+        print(",  ".join(parts))
+
+        manifest[fp.stem] = kept_ids
         _save_manifest(out_subdir, manifest)
+
+    # Persist RP report
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(rp_report, ensure_ascii=False, indent=2), encoding="utf-8")
+    if rp_report:
+        print(f"  [rp report] {len(rp_report)} rejected scene(s) → {report_path}")
 
     return produced
