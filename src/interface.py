@@ -698,7 +698,8 @@ with gr.Blocks(title="RP_IA") as app:
             ann_refresh_btn.click(ann_refresh,  [ann_idx] + _ann_edit, _ann_outs)
 
             # auto-load on tab open
-            app.load(ann_goto, ann_idx, _ann_outs)
+            # l'auto load pause problem, c'est la selection au hasard du modèle... on reprendra ça plus tard. 
+            # app.load(ann_goto, ann_idx, _ann_outs) # bug
 
         # ── Tab: Graph ───────────────────────────────────────────────────────
         with gr.Tab("Graph"):
