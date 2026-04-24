@@ -39,22 +39,10 @@ Extract:
 - characters: for each active character, what they do, say, or feel in this scene (one sentence each)
 - tensions: unresolved conflicts, revelations, emotional stakes, questions left open at scene's end
 
-Then evaluate whether this scene is genuine narrative roleplay:
-- is_rp: true if the scene is genuine RP, false if it is mainly out-of-character
-- rp_score: float 0.0 (not RP) to 1.0 (definitely RP). Threshold for is_rp=true is 0.5
-- rp_flags: list only flags that apply — "ooc" | "no_narrative" | "too_casual" | "meta" | "technical"
-
-RP signals (raise score):
-  • *actions in asterisks* present anywhere in the scene (strong signal — nearly all genuine RP has them)
-  • character voices in narrative dialogue (not player chat)
-  • story framing: descriptions of place, atmosphere, time
-  • in-universe references to characters, places, or events from the story
-
-Non-RP signals (lower score):
-  • zero *asterisk actions* throughout the entire scene
-  • players talking as themselves (scheduling, jokes, reactions to the game)
-  • pure casual/familiar conversation with no story framing and no narrative structure
-  • rule discussion, technical/meta talk, session setup
+Finally, score the RP quality (secondary — do not let this shorten the narrative above):
+- is_rp: true if score >= 0.5
+- rp_score: 0.0–1.0. Raise for *asterisk actions*, in-character dialogue, story framing. Lower for zero italics, OOC player chat, pure casual talk, meta/rules discussion.
+- rp_flags: only those that apply — "ooc" | "no_narrative" | "too_casual" | "meta" | "technical"
 
 JSON:
 {{
@@ -128,7 +116,7 @@ def run_synthesis(scenes_dir: Path, lore_dir: Path, report_path: Path | None = N
         prior_context = synthesis_context_block(lore_dir, current_scene_id=scene_id, window=5)
         result = call_llm_json(
             _PROMPT.format(prior_context=prior_context, text=text),
-            num_predict=640,
+            num_predict=1024,
             num_ctx=6144,
         )
 
