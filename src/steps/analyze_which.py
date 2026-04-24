@@ -23,6 +23,8 @@ def _is_valid_json(path: Path) -> bool:
 
 _PROMPT = """\
 Analyze the CONCEPTS present in this RP scene.
+
+IMPORTANT: if context seams too informal ignore analyse, return struct with empty fields (maybe a casual discussion)
 Concepts are named, specific elements that are neither characters nor locations nor events.
 They include: named objects of significance, factions/organizations, ideologies/beliefs, laws/systems, technologies, rituals, named artifacts.
 
@@ -105,7 +107,6 @@ def _merge_concept(existing: dict, extracted: dict, scene_id: str) -> dict:
 
 def _scene_text(messages: list[dict]) -> str:
     return "\n".join(
-        f"{(m.get('author') or {}).get('name', '?') if isinstance(m.get('author'), dict) else m.get('author', '?')}: "
         f"{m.get('content_en') or m.get('content', '')}"
         for m in messages
     )

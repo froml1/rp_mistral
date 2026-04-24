@@ -15,6 +15,8 @@ def make_char_summary(data: dict) -> str:
     parts.append(name)
     if data.get("job"):
         parts.append(data["job"])
+    if data.get("author"):
+        parts.append(data["author"])
     psych = (data.get("description_psychological") or "").strip()
     if psych:
         parts.append(psych[:120])
@@ -24,6 +26,9 @@ def make_char_summary(data: dict) -> str:
     locs = (data.get("main_locations") or [])[:2]
     if locs:
         parts.append("locs: " + ", ".join(locs))
+    rels = (data.get("relations") or [])[:2]
+    if rels:
+        parts.append("rels: " + ", ".join(rels))
     ep = data.get("emotional_polarity") or {}
     emo = (ep.get("dominant_emotions") or [])[:2]
     if emo:

@@ -19,6 +19,7 @@ LORE_DIR = Path(__file__).parent.parent.parent / "data" / "lore"
 _PROMPT = """\
 Analyze the SPEECH PATTERNS of character "{name}" based on their lines in this RP scene.
 
+IMPORTANT: if context seams too informal ignore analyse, return struct with empty fields (maybe a casual discussion)
 Character's lines (actions marked with * and dialogue):
 ---
 {char_lines}

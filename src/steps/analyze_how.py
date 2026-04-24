@@ -23,7 +23,7 @@ _GENERAL_HOW_YAML = Path(__file__).parent.parent.parent / "data" / "lore" / "gen
 
 _PROMPT = """\
 Based on the full analysis of this scene, identify HOW events unfold: causal links, character relationships/sentiments, and connections between all elements.
-
+IMPORTANT: if context seams too informal ignore analyse, return struct with empty fields (maybe a casual discussion)
 TEMPORAL: {when}
 
 LOCATIONS (with details):
@@ -72,7 +72,6 @@ Scene:
 
 def _scene_text(messages: list[dict]) -> str:
     return "\n".join(
-        f"{(m.get('author') or {}).get('name', '?') if isinstance(m.get('author'), dict) else m.get('author', '?')}: "
         f"{m.get('content_en') or m.get('content', '')}"
         for m in messages
     )
@@ -115,7 +114,9 @@ def _format_who_details(who: dict) -> str:
         name = c.get("canonical_name", "")
         psych = c.get("description_psychological", "")
         locs = ", ".join((c.get("main_locations") or [])[:3])
+        rels = ", ".join((c.get("relations") or [])[:3])
         parts.append(f"- {name}: {psych[:80]}" + (f" [locations: {locs}]" if locs else ""))
+        parts.append(f"- {name}: {psych[:80]}" + (f" [rels: {rels}]" if rels else ""))
     return "\n".join(parts)
 
 

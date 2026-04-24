@@ -132,6 +132,14 @@ def run_subdivide(translated_dir: Path, out_dir: Path, purged_dir: Path | None =
         with open(fp, encoding="utf-8") as f:
             data = json.load(f)
         messages = data.get("messages", data) if isinstance(data, dict) else data
+        foundRpMarker = False 
+        for m in messages: 
+            if "*" in m:
+                foundRpMarker = True; break 
+        
+        if not foundRpMarker:
+            print("no rp marker found skip...")
+            continue
 
         pre_scenes = _group_by_scene_tag(messages)
         processed = manifest.get("processed", {})  # {str(pre_idx): sub_scene_count}

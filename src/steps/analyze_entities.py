@@ -46,8 +46,8 @@ def _is_valid_json(path: Path) -> bool:
 
 _PROMPT = """\
 Analyze the CHARACTERS and CONCEPTS present in this RP scene in one pass.
-IMPORTANT: Discord authors (who write the scene) are NOT characters. Authors to ignore: {authors}
-
+IMPORTANT: author (Discord users who write the scene in field author) are NOT characters, even if figure in content. Author to ignore: {authors},yaya,zyu
+IMPORTANT: if context seams too informal ignore analyse, return struct with empty fields (maybe a casual discussion)
 Known characters (may be incomplete):
 {known_chars_yaml}
 
@@ -57,7 +57,7 @@ Known concepts (may be incomplete):
 ── CHARACTERS ──────────────────────────────────────────────────────────────────
 For each character (not author) present or active in this scene:
 
-Identity: canonical_name (lowercase full name), appellations (all references), description_physical, job, main_locations
+Identity: canonical_name (lowercase full name), author (lowercase), appellations (all references), description_physical, job, relations, main_locations
 Psychology: description_psychological, likes (list), dislikes (list), beliefs (list)
 Emotional polarity: dominant_emotions (1-3 emotions), emotional_range (narrow|moderate|wide), emotional_triggers (list)
 
@@ -85,7 +85,7 @@ JSON:
 {{
   "characters": [{{
     "canonical_name": "", "appellations": [], "description_physical": "", "job": "",
-    "main_locations": [], "description_psychological": "", "likes": [], "dislikes": [],
+    "main_locations": [], "relations": [], "description_psychological": "", "likes": [], "dislikes": [],
     "beliefs": [],
     "emotional_polarity": {{"dominant_emotions": [], "emotional_range": "moderate", "emotional_triggers": []}},
     "personality_axes": {{"calm_vs_impulsive": 0, "introvert_vs_extrovert": 0, "cautious_vs_reckless": 0,
@@ -185,20 +185,20 @@ def _merge_emotional_polarity(existing: dict, new_ep: dict) -> dict:
 def _merge_char(existing: dict, extracted: dict, scene_id: str) -> dict:
     merged = dict(existing)
     merged.setdefault("name", extracted.get("canonical_name", ""))
-    for field in ("appellations", "beliefs", "likes", "dislikes", "main_locations", "misc", "appearances"):
+    for field in ("appellations", "beliefs", "likes", "dislikes", "main_locations", "relations", "misc", "appearances"):
         merged.setdefault(field, [])
-    for field in ("description_physical", "description_psychological", "job"):
+    for field in ("description_physical", "description_psychological", "job", "author"):
         merged.setdefault(field, "")
     merged.setdefault("emotional_polarity", {})
     merged.setdefault("personality_axes", {})
     merged.setdefault("competency_axes", {})
 
     _merge_list(merged["appellations"], extracted.get("appellations") or [])
-    for field in ("description_physical", "description_psychological", "job"):
+    for field in ("description_physical", "description_psychological", "job", "author"):
         new_val = (extracted.get(field) or "").strip().lower()
         if new_val and len(new_val) > len(merged.get(field) or ""):
             merged[field] = new_val
-    for field in ("beliefs", "likes", "dislikes", "main_locations", "misc"):
+    for field in ("beliefs", "likes", "dislikes", "main_locations", "relations",  "misc"):
         _merge_list(merged[field], extracted.get(field) or [])
 
     merged["emotional_polarity"] = _merge_emotional_polarity(merged["emotional_polarity"], extracted.get("emotional_polarity") or {})
@@ -261,7 +261,6 @@ def _merge_concept(existing: dict, extracted: dict, scene_id: str) -> dict:
 
 def _scene_text(messages: list[dict]) -> str:
     return "\n".join(
-        f"{(m.get('author') or {}).get('name', '?') if isinstance(m.get('author'), dict) else m.get('author', '?')}: "
         f"{m.get('content_en') or m.get('content', '')}"
         for m in messages
     )

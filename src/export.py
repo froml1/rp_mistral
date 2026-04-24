@@ -73,6 +73,8 @@ def export_character(char: dict) -> str:
     lines.append("## Identity")
     if char.get("job"):
         lines.append(f"**Role:** {char['job']}")
+    if char.get("author"):
+        lines.append(f"**Author:** {char['author']}")
     if char.get("appellations"):
         lines.append(f"**Known as:** {', '.join(char['appellations'])}")
     lines.append("")
@@ -92,6 +94,9 @@ def export_character(char: dict) -> str:
     # Locations
     if char.get("main_locations"):
         lines += ["## Main locations", _list_md(char["main_locations"]), ""]
+
+    if char.get("relations"):
+        lines += ["## Relations", _list_md(char["relations"]), ""]
 
     # Relations from how.json (cross-scene aggregation)
     char_name_low = name.lower()

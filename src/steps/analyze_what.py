@@ -20,6 +20,7 @@ def _is_valid_json(path: Path) -> bool:
 _PROMPT = """\
 Based on the analysis context below, produce an EXHAUSTIVE list of everything that happens in this scene.
 
+IMPORTANT: if context seams too informal ignore analyse, return struct with empty fields (maybe a casual discussion)
 TEMPORAL CONTEXT:
 {when}
 
@@ -57,7 +58,6 @@ Scene:
 
 def _scene_text(messages: list[dict]) -> str:
     return "\n".join(
-        f"{(m.get('author') or {}).get('name', '?') if isinstance(m.get('author'), dict) else m.get('author', '?')}: "
         f"{m.get('content_en') or m.get('content', '')}"
         for m in messages
     )

@@ -22,7 +22,13 @@ def _is_valid_json(path: Path) -> bool:
 
 _PROMPT = """\
 Analyze the CHARACTERS in this RP scene.
-IMPORTANT: authors (Discord users who write the scene) are NOT characters. Authors to ignore: {authors}
+
+IMPORTANT: author (Discord users who write the scene in field author) are NOT characters, even if figure in content. Author to ignore: {authors}
+    in content, author figure out before first :, real scene text afterward. Author is usefull to match character played as main player.
+    Beware : a character can be mentionned by an author but not played. 
+
+IMPORTANT: if context seams too informal ignore analyse, return struct with empty fields (maybe a casual discussion)
+IMPORTANT: if unknown character identified try to match on previous characters inputed, and try to identify wich one, if can't ignore.
 
 Known information about characters (may be incomplete):
 {known_yaml}
@@ -33,8 +39,10 @@ IDENTITY
 - canonical_name: full name in lowercase (e.g. "lena marchal")
 - appellations: all names/references excluding pronouns (e.g. ["lena", "miss marchal", "the chrome mask"])
 - description_physical: physical appearance details
-- job: occupation or social role
-- main_locations: places associated with this character
+- join : occupation or social role
+- main_locations: places associated with this character 
+- relations: relation shared with other characters with relation type
+- author: who's writing message content (e.g. ["Yaya", "Zyu"])
 
 PSYCHOLOGY
 - description_psychological: general personality and behavior summary
@@ -97,11 +105,13 @@ Update known info, correct inconsistencies.
 JSON:
 {{
   "characters": [{{
+    "author": "",
     "canonical_name": "",
     "appellations": [],
     "description_physical": "",
     "job": "",
     "main_locations": [],
+    "relations": [],
     "description_psychological": "",
     "likes": [],
     "dislikes": [],
@@ -267,7 +277,9 @@ def _merge_char(existing: dict, extracted: dict, scene_id: str) -> dict:
     merged.setdefault("beliefs", [])
     merged.setdefault("likes", [])
     merged.setdefault("dislikes", [])
+    merged.setdefault("relations", [])
     merged.setdefault("main_locations", [])
+    merged.setdefault("author", "")
     merged.setdefault("emotional_polarity", {})
     merged.setdefault("personality_axes", {})
     merged.setdefault("competency_axes", {})
@@ -276,7 +288,7 @@ def _merge_char(existing: dict, extracted: dict, scene_id: str) -> dict:
 
     _merge_list(merged["appellations"], extracted.get("appellations") or [])
 
-    for field in ("description_physical", "description_psychological", "job"):
+    for field in ("description_physical", "description_psychological", "job", "author"):
         new_val = (extracted.get(field) or "").strip().lower()
         if new_val and len(new_val) > len(merged.get(field) or ""):
             merged[field] = new_val
@@ -285,6 +297,7 @@ def _merge_char(existing: dict, extracted: dict, scene_id: str) -> dict:
     _merge_list(merged["likes"],     extracted.get("likes") or [])
     _merge_list(merged["dislikes"],  extracted.get("dislikes") or [])
     _merge_list(merged["main_locations"], extracted.get("main_locations") or [])
+    _merge_list(merged["relations"], extracted.get("relations") or [])
     _merge_list(merged["misc"],      extracted.get("misc") or [])
 
     merged["emotional_polarity"] = _merge_emotional_polarity(

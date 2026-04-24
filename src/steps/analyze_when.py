@@ -19,7 +19,7 @@ def _is_valid_json(path: Path) -> bool:
 _PROMPT = """\
 Analyze the TEMPORAL context of this RP scene.
 Base your analysis ONLY on narrative content, NOT on timestamps.
-
+IMPORTANT: if context seams too informal ignore analyse, return struct with empty fields (maybe a casual discussion)
 Extract:
 - summary: one sentence describing the temporal context
 - duration: estimated duration of the scene (e.g. "a few minutes", "an evening", "unknown")
@@ -37,7 +37,6 @@ Scene:
 
 def _scene_text(messages: list[dict]) -> str:
     return "\n".join(
-        f"{(m.get('author') or {}).get('name', '?') if isinstance(m.get('author'), dict) else m.get('author', '?')}: "
         f"{m.get('content_en') or m.get('content', '')}"
         for m in messages
     )

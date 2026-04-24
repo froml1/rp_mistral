@@ -326,10 +326,10 @@ def _fmt_entity(entity: dict, cat: str) -> str:
     if entity.get("appellations"):
         lines.append(f"  aliases: {', '.join(str(a) for a in entity['appellations'])}")
     for field in ("description", "description_physical", "description_psychological",
-                  "job", "significance", "type"):
+                  "job", "significance", "type", "author"):
         if entity.get(field):
             lines.append(f"  {field}: {entity[field]}")
-    for field in ("beliefs", "attributes", "related_characters", "main_locations"):
+    for field in ("beliefs", "attributes", "related_characters", "main_locations", "relations"):
         items = entity.get(field)
         if items:
             lines.append(f"  {field}: {', '.join(str(x) for x in items)}")
@@ -428,9 +428,11 @@ def query_analytical(question: str, lore: dict) -> str:
         psych = (c.get("description_psychological") or "")[:80]
         locs  = ", ".join((c.get("main_locations") or [])[:3]) or "—"
         lines.append(f"• **{name}** ({len(apps)} scene(s)) — {job}")
+        rels  = ", ".join((c.get("relations") or [])[:3]) or "—"
         if psych:
             lines.append(f"  {psych}")
         lines.append(f"  locations: {locs}")
+        lines.append(f"  locations: {rels}")
         lines.append(f"  scenes: {', '.join(str(s) for s in apps) or 'none'}")
     return "\n".join(lines)
 
