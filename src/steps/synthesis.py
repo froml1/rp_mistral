@@ -29,6 +29,9 @@ Read this RP scene and produce a detailed narrative summary.
 This is a text-based roleplay: characters speak in dialogue and perform *actions in italics*.
 Be specific — name characters, places, objects. Capture the emotional atmosphere and stakes.
 
+PRIOR SCENES (use to recognize recurring characters and ongoing tensions — do not invent):
+{prior_context}
+
 Extract:
 - narrative: 3-4 sentences covering what happens (dialogue topics, *physical actions*, key decisions, emotional tone and atmosphere of the scene)
 - characters: for each active character, what they do, say, or feel in this scene (one sentence each)
@@ -93,7 +96,12 @@ def run_synthesis(scenes_dir: Path, lore_dir: Path) -> Path:
         if not text.strip():
             continue
 
-        result = call_llm_json(_PROMPT.format(text=text), num_predict=512, num_ctx=6144)
+        prior_context = synthesis_context_block(lore_dir, current_scene_id=scene_id, window=5)
+        result = call_llm_json(
+            _PROMPT.format(prior_context=prior_context, text=text),
+            num_predict=512,
+            num_ctx=6144,
+        )
 
         entry = {
             "narrative":   str(result.get("narrative") or ""),
