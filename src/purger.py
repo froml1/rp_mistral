@@ -1,21 +1,24 @@
 """
-Light purge — keeps maximum content, only drops structurally empty messages.
+Purge — two-pass scene extraction.
 
-Filtering (no LLM, no block logic):
-  - Empty content after cleaning
-  - Pure separator lines (---, ===, ~~~)
-  - Custom Discord emoji only (no readable text)
-  - URL-only messages (image links, attachments)
+Pass 1 — message filtering (no LLM):
+  Drop: empty content, pure separators (---, ===), custom-emoji-only, URL-only.
+  Tag each kept message with _scene based on time gaps:
+    gap > 30 min  → new scene
+    gap > 60 min  → new session (same effect: new scene)
 
-Scene tagging (_scene field) based on time gaps only:
-  - gap > 30 min  → new scene within same session
-  - gap > 60 min  → new session (reset)
+Pass 2 — scene size filter:
+  Drop entire scene groups with fewer than MIN_SCENE_MESSAGES messages.
+
+Output: one JSON file per surviving scene, written to out_dir/.
+  Format: {"scene_id": "stem_000", "source": "stem.json", "messages": [...]}
 """
 
 import csv
 import json
 import re
 import sys
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -27,8 +30,9 @@ _MENTION      = re.compile(r'<@!?\d+>')
 _URL          = re.compile(r'https?://\S+')
 _NARRATIVE    = re.compile(r'[a-zA-ZÀ-ÿ0-9]{2,}')
 
-_SCENE_BREAK_SECS = 1800   # 30 min → new scene tag
-_SESSION_END_SECS = 3600   # 60 min → new session (scene reset)
+_SCENE_BREAK_SECS  = 1800  # 30 min → new scene
+_SESSION_END_SECS  = 3600  # 60 min → new session (= new scene)
+MIN_SCENE_MESSAGES = 20
 
 
 def _parse_ts(ts: str) -> datetime | None:
@@ -53,8 +57,7 @@ def _should_drop(content: str) -> bool:
         return True
     if _SCENE_BREAK.match(s):
         return True
-    cleaned = _clean(s)
-    if not _NARRATIVE.search(cleaned):
+    if not _NARRATIVE.search(_clean(s)):
         return True
     return False
 
@@ -81,65 +84,85 @@ def load_messages(filepath: Path) -> list[dict]:
     return data.get("messages", data) if isinstance(data, dict) else data
 
 
-def purge_export(filepath: Path, out_path: Path, verbose: bool = True) -> int:
+def purge_export(filepath: Path, out_dir: Path, verbose: bool = True,
+                 min_scene_messages: int = MIN_SCENE_MESSAGES) -> list[Path]:
+    """
+    Parse filepath, split by time gaps, drop small scenes.
+    Returns list of written scene file paths.
+    """
     raw_messages = load_messages(filepath)
     if not raw_messages:
-        out_path.write_text('{"messages": []}', encoding="utf-8")
-        return 0
+        return []
 
     raw_messages.sort(key=lambda m: _parse_ts(m.get("timestamp", "")) or datetime.min)
     total = len(raw_messages)
+    stem  = filepath.stem
 
-    scene_id = 0
+    # ── Pass 1: filter + tag by time gap ─────────────────────────────────────
+    scene_idx = 0
     last_ts: datetime | None = None
-    kept = 0
-    first = True
+    buckets: dict[int, list[dict]] = defaultdict(list)
 
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write('{"messages": [')
+    for msg in raw_messages:
+        content = msg.get("content", "").strip()
+        ts = _parse_ts(msg.get("timestamp", ""))
 
-        for msg in raw_messages:
-            content = msg.get("content", "").strip()
-            ts = _parse_ts(msg.get("timestamp", ""))
+        if last_ts and ts:
+            gap = (ts - last_ts).total_seconds()
+            if gap > _SCENE_BREAK_SECS:          # covers both 30-min and 60-min cases
+                scene_idx += 1
+                if verbose:
+                    tag = "session" if gap > _SESSION_END_SECS else "scene"
+                    print(f"  [new {tag}] gap {int(gap//60)}min → #{scene_idx} | {ts.strftime('%Y-%m-%d %H:%M')}")
+        if ts:
+            last_ts = ts
 
-            # Scene tagging from time gaps only
-            if last_ts and ts:
-                gap = (ts - last_ts).total_seconds()
-                if gap > _SESSION_END_SECS:
-                    scene_id += 1
-                    if verbose:
-                        print(f"  [new session] gap {int(gap//60)}min → scene {scene_id} | {ts.strftime('%Y-%m-%d %H:%M')}")
-                elif gap > _SCENE_BREAK_SECS:
-                    scene_id += 1
-                    if verbose:
-                        print(f"  [new scene]   gap {int(gap//60)}min → scene {scene_id} | {ts.strftime('%Y-%m-%d %H:%M')}")
-            if ts:
-                last_ts = ts
+        if _should_drop(content):
+            continue
 
-            if _should_drop(content):
-                continue
+        buckets[scene_idx].append(msg)
 
-            f.write(("" if first else ",") + "\n  ")
-            json.dump({**msg, "_scene": scene_id}, f, ensure_ascii=False)
-            first = False
-            kept += 1
+    # ── Pass 2: drop small scenes, write surviving ones ───────────────────────
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-        f.write("\n]}")
+    small   = {sid for sid, msgs in buckets.items() if len(msgs) < min_scene_messages}
+    kept_n  = len(buckets) - len(small)
+    dropped_msgs = sum(len(buckets[s]) for s in small)
+
+    if verbose and small:
+        print(f"  [pass 2] {len(small)} scene(s) < {min_scene_messages} msgs dropped "
+              f"({dropped_msgs} messages removed)")
+
+    written: list[Path] = []
+    file_idx = 0
+    for sid in sorted(buckets):
+        if sid in small:
+            continue
+        msgs = buckets[sid]
+        scene_id   = f"{stem}_{file_idx:03d}"
+        scene_path = out_dir / f"{scene_id}.json"
+        scene_path.write_text(
+            json.dumps({"scene_id": scene_id, "source": filepath.name, "messages": msgs},
+                       ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        written.append(scene_path)
+        file_idx += 1
 
     if verbose:
-        print(f"  {filepath.name}: {total} → {kept} kept ({total - kept} dropped)")
+        kept_msgs = sum(len(buckets[s]) for s in buckets if s not in small)
+        print(f"  {filepath.name}: {total} raw → {kept_msgs} msgs in {len(written)} scene(s)")
 
-    return kept
+    return written
 
 
 if __name__ == "__main__":
     exports_dir = next((a for a in sys.argv[1:] if not a.startswith("--")), "data/exports")
     input_path  = Path(exports_dir)
-    out_dir     = Path(__file__).resolve().parent.parent / "data" / "purged"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_root    = Path(__file__).resolve().parent.parent / "data" / "purged"
 
     files = [input_path] if input_path.is_file() else (
         list(input_path.glob("**/*.json")) + list(input_path.glob("**/*.csv"))
     )
     for fp in files:
-        purge_export(fp, out_dir / (fp.stem + ".json"), verbose=True)
+        purge_export(fp, out_root / fp.stem, verbose=True)

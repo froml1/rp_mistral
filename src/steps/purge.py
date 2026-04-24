@@ -1,4 +1,4 @@
-"""Step 1 - Purge: filter RP messages, tag scenes by time gap."""
+"""Step 1 - Purge: filter messages, split into scene files by time gap."""
 
 import sys
 from pathlib import Path
@@ -26,15 +26,16 @@ def run_purge(exports_dir: Path, out_dir: Path) -> list[Path]:
 
     produced = []
     for fp in files:
-        out_path = out_dir / (fp.stem + ".json")
-        if out_path.exists() and _is_valid_json(out_path):
-            print(f"  [skip] {fp.name} -> already purged")
-            produced.append(out_path)
+        stem_dir = out_dir / fp.stem
+        # Skip if already done (stem_dir exists and has at least one scene file)
+        existing = sorted(stem_dir.glob("*.json")) if stem_dir.exists() else []
+        if existing:
+            print(f"  [skip] {fp.name} -> {len(existing)} scene(s) already purged")
+            produced.extend(existing)
             continue
-        if out_path.exists():
-            print(f"  [corrupt] {out_path.name} is malformed, re-purging...")
+
         print(f"  Purging {fp.name}...")
-        purge_export(fp, out_path, verbose=True)
-        produced.append(out_path)
+        written = purge_export(fp, stem_dir, verbose=True)
+        produced.extend(written)
 
     return produced
