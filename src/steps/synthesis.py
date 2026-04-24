@@ -1,20 +1,20 @@
 """
-Step 4b — Synthesis: build a rich narrative synthesis from sweep data.
+Step 4 — Synthesis: build a rich narrative synthesis directly from scene files.
 Output frozen in data/lore/lore_how.yaml.
 
 Two-phase hierarchical approach (Mistral context-window safe):
-  Phase A — done by lore_sweep: 1 narrative line per scene
-  Phase B — here: batch compression (N scenes → summary) then global synthesis
+  Phase A — batch compression: N scenes → one summary per batch
+  Phase B — global synthesis: all batch summaries → lore_how.yaml
 
 lore_how.yaml contains:
   overall_context  — 2-3 sentence global description of the story
   narrative_axes   — main story threads with characters and tension
   characters       — role, arc, key relations per character
 
-Replaces general_how.yaml as the narrative context injected into step 6.
 Incremental: already-computed batch summaries are reused on re-run.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -23,17 +23,16 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
-from steps.lore_sweep import load_sweep
 
 LORE_HOW_FILE = "lore_how.yaml"
 _BATCH_SIZE = 40
 
 _BATCH_PROMPT = """\
-Summarize the events and character dynamics from these RP scene descriptions in 3-4 sentences.
+Summarize the events and character dynamics from these RP scenes in 3-4 sentences.
 Focus on: what happened, who was involved, key tensions, revelations, or turning points.
 
 Scenes:
-{narratives}
+{scenes}
 
 JSON: {{"summary": ""}}"""
 
@@ -43,15 +42,9 @@ You are synthesizing a complete roleplay story. Build a rich narrative synthesis
 STORY SUMMARY (chronological batches):
 {batch_summaries}
 
-KNOWN CHARACTERS:
-{characters}
-
-KNOWN PLACES:
-{places}
-
 Produce:
 
-1. CHARACTERS — for each main character (those appearing most): name, role in the story, narrative arc (how they evolve), key_relations (list of "other_character : relation_type").
+1. CHARACTERS — for each main character: name, role in the story, narrative arc (how they evolve), key_relations (list of "other_character : relation_type").
 2. NARRATIVE AXES — 2 to 6 main story threads. Each: name, summary (2 sentences), characters involved, core tension.
 3. OVERALL CONTEXT — 2-3 sentences: setting, mood, central conflict of this story.
 
@@ -63,64 +56,82 @@ JSON:
 }}"""
 
 
-def run_synthesis(lore_dir: Path) -> Path:
+def _scene_snippet(scene: dict, max_msgs: int = 8, max_chars: int = 120) -> str:
+    msgs = scene.get("messages", [])[:max_msgs]
+    lines = []
+    for m in msgs:
+        author = (m.get("author") or {}).get("name", "?") if isinstance(m.get("author"), dict) else str(m.get("author", "?"))
+        content = (m.get("content_en") or m.get("content", ""))[:max_chars]
+        lines.append(f"[{author}]: {content}")
+    return "\n".join(lines)
+
+
+def run_synthesis(scenes_dir: Path, lore_dir: Path) -> Path:
     """
-    Build narrative synthesis from sweep narratives.
+    Build narrative synthesis from all scene files.
     Saves to data/lore/lore_how.yaml. Incremental: skips if already done.
     """
     lore_how_path = lore_dir / LORE_HOW_FILE
-    sweep = load_sweep(lore_dir)
-    narratives: dict[str, str] = sweep.get("narratives") or {}
 
-    if not narratives:
-        print("  [lore_how] no sweep narratives found — run step 4 (sweep) first")
+    scene_files = sorted(scenes_dir.glob("**/*.json"))
+    if not scene_files:
+        print("  [lore_how] no scene files found")
         return lore_how_path
 
-    sorted_scenes = sorted(narratives.items())
-
-    # Load existing file to reuse cached batch summaries
+    # Load existing to reuse cached batch summaries
     existing: dict = {}
     if lore_how_path.exists():
         existing = yaml.safe_load(lore_how_path.read_text(encoding="utf-8")) or {}
 
     if existing.get("_done"):
-        n_axes = len(existing.get("narrative_axes") or [])
+        n_axes  = len(existing.get("narrative_axes") or [])
         n_chars = len(existing.get("characters") or [])
         print(f"  [lore_how] already done — {n_axes} axes, {n_chars} characters")
         return lore_how_path
 
-    cached_batches: list[str] = existing.get("_batch_summaries") or []
-    batches = [sorted_scenes[i:i + _BATCH_SIZE] for i in range(0, len(sorted_scenes), _BATCH_SIZE)]
+    # Build scene batches
+    batches = [scene_files[i:i + _BATCH_SIZE] for i in range(0, len(scene_files), _BATCH_SIZE)]
     total = len(batches)
+    cached: list[str] = existing.get("_batch_summaries") or []
 
-    # Phase B-1: compress each batch (skip already cached)
-    batch_summaries: list[str] = list(cached_batches)
-    for i, batch in enumerate(batches[len(cached_batches):], start=len(cached_batches)):
-        lines = "\n".join(f"- {sid}: {narr}" for sid, narr in batch)
-        result = call_llm_json(_BATCH_PROMPT.format(narratives=lines), num_predict=400, num_ctx=4096)
+    # Phase A: compress each batch
+    batch_summaries: list[str] = list(cached)
+    for i, batch in enumerate(batches[len(cached):], start=len(cached)):
+        scenes_text_parts = []
+        for sf in batch:
+            try:
+                scene = json.loads(sf.read_text(encoding="utf-8"))
+                sid = scene.get("scene_id", sf.stem)
+                snippet = _scene_snippet(scene)
+                if snippet.strip():
+                    scenes_text_parts.append(f"--- {sid} ---\n{snippet}")
+            except Exception:
+                continue
+
+        if not scenes_text_parts:
+            batch_summaries.append("(empty batch)")
+            continue
+
+        result = call_llm_json(
+            _BATCH_PROMPT.format(scenes="\n\n".join(scenes_text_parts)),
+            num_predict=400,
+            num_ctx=6144,
+        )
         summary = (result.get("summary") or "").strip()
         batch_summaries.append(summary or "(no summary)")
-        print(f"  [lore_how] batch {i + 1}/{total} compressed")
+        print(f"  [lore_how] batch {i + 1}/{total} done")
 
         # Save progress after each batch
         existing["_batch_summaries"] = batch_summaries
         lore_dir.mkdir(parents=True, exist_ok=True)
         lore_how_path.write_text(yaml.dump(existing, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
-    # Phase B-2: final synthesis
-    chars_catalog  = sweep.get("characters") or {}
-    places_catalog = sweep.get("places") or {}
-    chars_lines  = "\n".join(f"- {n}: {d.get('description', '')}" for n, d in list(chars_catalog.items())[:25])
-    places_lines = "\n".join(f"- {n}: {d.get('description', '')}" for n, d in list(places_catalog.items())[:12])
+    # Phase B: global synthesis
     all_summaries = "\n\n".join(f"[batch {i+1}] {s}" for i, s in enumerate(batch_summaries))
+    print(f"  [lore_how] global synthesis ({len(batch_summaries)} batches)…")
 
-    print(f"  [lore_how] final synthesis call ({len(batch_summaries)} batches)…")
     final = call_llm_json(
-        _FINAL_PROMPT.format(
-            batch_summaries=all_summaries,
-            characters=chars_lines or "none",
-            places=places_lines or "none",
-        ),
+        _FINAL_PROMPT.format(batch_summaries=all_summaries),
         num_predict=2048,
         num_ctx=8192,
     )
@@ -149,10 +160,7 @@ def load_lore_how(lore_dir: Path) -> dict:
 
 
 def synthesis_context_block(lore_dir: Path) -> str:
-    """
-    Format lore_how.yaml as a prompt injection block.
-    Used by all step-6 analyze functions as their primary narrative anchor.
-    """
+    """Format lore_how.yaml as a prompt injection block for step-6 analyze functions."""
     s = load_lore_how(lore_dir)
     if not s or not s.get("_done"):
         return "none"

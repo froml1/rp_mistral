@@ -13,7 +13,7 @@ Steps:
   1 - Purge       data/exports/    -> data/purged/
   2 - Translate   data/purged/     -> data/translated/
   3 - Subdivide   data/translated/ -> data/scenes/
-  4 - Sweep       data/scenes/     -> data/lore/sweep.yaml  (light entity pass, whole corpus)
+  4 - Synthesis   data/scenes/     -> data/lore/lore_how.yaml  (narrative synthesis, whole corpus)
   5 - RP Filter   data/scenes/     -> data/analysis/{id}/rp_check.json + data/rp_report.json
   6 - Analyze     data/scenes/     -> data/analysis/{scene_id}/  (skips non-RP scenes)
                                       data/lore/characters/ places/ concepts/
@@ -31,7 +31,6 @@ sys.path.insert(0, str(ROOT / "src"))
 from steps.purge         import run_purge
 from steps.translate     import run_translate
 from steps.subdivide     import run_subdivide
-from steps.lore_sweep    import run_lore_sweep
 from steps.synthesis     import run_synthesis
 from steps.rp_filter     import run_rp_filter, is_scene_rp
 from steps.analyze_context  import run_context
@@ -153,15 +152,13 @@ def run_pipeline(
         run_subdivide(TRANSLATED_DIR, SCENES_DIR, purged_dir=PURGED_DIR)
 
     if should_run(4):
-        print("\n== STEP 4 - SWEEP + SYNTHESIS ==")
+        print("\n== STEP 4 - SYNTHESIS ==")
         scene_files = sorted(SCENES_DIR.glob("**/*.json"))
         if not scene_files:
             print("  No scene files found. Run step 3 first.")
             return
-        print(f"  {len(scene_files)} scenes to sweep")
-        run_lore_sweep(SCENES_DIR, LORE_DIR)
-        print("  Building narrative synthesis…")
-        run_synthesis(LORE_DIR)
+        print(f"  {len(scene_files)} scenes to synthesize")
+        run_synthesis(SCENES_DIR, LORE_DIR)
 
     if should_run(5):
         print("\n== STEP 5 - RP FILTER ==")

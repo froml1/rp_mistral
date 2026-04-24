@@ -14,7 +14,6 @@ from steps.manual_lore import (
     load_manual_char, load_all_manual_chars, merge_manual_into_char,
     load_manual_concept, load_all_manual_concepts, merge_manual_into_concept,
 )
-from steps.lore_sweep import sweep_context_lines
 from steps.synthesis import synthesis_context_block
 from lore_summary import update_summary, summaries_for_dir
 try:
@@ -356,13 +355,8 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
     for name, mc in load_all_manual_concepts().items():
         known_concepts[name] = merge_manual_into_concept(known_concepts.get(name, {}), mc) if name in known_concepts else mc
 
-    # Prefer sweep (richer, corpus-wide) over per-scene cumulative summaries
-    if lore_dir is not None:
-        known_chars_yaml    = sweep_context_lines(lore_dir, "characters", limit=20) or "none"
-        known_concepts_yaml = sweep_context_lines(lore_dir, "concepts",   limit=15) or "none"
-    else:
-        known_chars_yaml    = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known_chars.items())    or "none"
-        known_concepts_yaml = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known_concepts.items()) or "none"
+    known_chars_yaml    = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known_chars.items())    or "none"
+    known_concepts_yaml = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known_concepts.items()) or "none"
 
     result = call_llm_json(
         _PROMPT.format(
