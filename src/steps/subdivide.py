@@ -135,8 +135,14 @@ def run_subdivide(translated_dir: Path, out_dir: Path, purged_dir: Path | None =
         print(f"  {fp.name} ({len(messages)} msgs)", end="")
 
         sub_scenes = _subdivide(messages)
+        sub_scenes = [s for s in sub_scenes if len(s) >= 20]
 
-        if len(sub_scenes) == 1:
+        if not sub_scenes:
+            print(f" → all sub-scenes < 20 msgs, skipped")
+            manifest[fp.stem] = []
+            _save_manifest(out_subdir, manifest)
+            continue
+        elif len(sub_scenes) == 1:
             print(" → 1 scene")
         else:
             print(f" → {len(sub_scenes)} sub-scenes")
