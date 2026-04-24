@@ -153,7 +153,7 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
 
     # Prefer pre-computed synthesis (stable, full-corpus view) over rolling how_context
     if lore_dir is not None:
-        recent_ctx = synthesis_context_block(lore_dir)
+        recent_ctx = synthesis_context_block(lore_dir, current_scene_id=scene_id)
     else:
         how_ctx = _load_how_context()
         recent_ctx = "\n".join(

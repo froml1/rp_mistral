@@ -361,7 +361,7 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
     result = call_llm_json(
         _PROMPT.format(
             authors=", ".join(authors),
-            synthesis=synthesis_context_block(lore_dir) if lore_dir else "none",
+            synthesis=synthesis_context_block(lore_dir, current_scene_id=scene_id) if lore_dir else "none",
             author_hints=_author_hints(messages),
             known_chars_yaml=known_chars_yaml,
             known_concepts_yaml=known_concepts_yaml,

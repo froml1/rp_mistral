@@ -89,7 +89,7 @@ def run_what(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who:
     where_ctx = f"Locations: {', '.join(where.get('locations') or [])}. Changes: {where.get('location_changes')}"
     who_ctx   = f"Characters present: {', '.join(who.get('characters') or [])}"
     which_ctx = ", ".join(which.get("concepts") or []) or "none identified"
-    narrative_ctx = synthesis_context_block(lore_dir) if lore_dir else "none"
+    narrative_ctx = synthesis_context_block(lore_dir, current_scene_id=scene_id) if lore_dir else "none"
 
     result = call_llm_json(
         _PROMPT.format(

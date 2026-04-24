@@ -163,7 +163,7 @@ def run_context(scene_file: Path, analysis_dir: Path, places_dir: Path, lore_dir
     known_yaml = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known.items()) or "none"
     result = call_llm_json(
         _PROMPT.format(
-            synthesis=synthesis_context_block(lore_dir) if lore_dir else "none",
+            synthesis=synthesis_context_block(lore_dir, current_scene_id=scene_id) if lore_dir else "none",
             known_yaml=known_yaml,
             text=text,
         ),

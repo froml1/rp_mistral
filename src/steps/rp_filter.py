@@ -75,8 +75,6 @@ def run_rp_filter(scenes_dir: Path, lore_dir: Path, analysis_dir: Path) -> dict:
     Filter all scenes. Returns stats dict.
     Writes per-scene rp_check.json + data/rp_report.json for manual review.
     """
-    story_context = synthesis_context_block(lore_dir)
-
     report_path = analysis_dir.parent / "rp_report.json"
     report: dict = {}
     if report_path.exists() and _is_valid_json(report_path):
@@ -101,6 +99,8 @@ def run_rp_filter(scenes_dir: Path, lore_dir: Path, analysis_dir: Path) -> dict:
         text = _scene_text(scene.get("messages", []))
         if not text.strip():
             continue
+
+        story_context = synthesis_context_block(lore_dir, current_scene_id=scene_id)
 
         result = call_llm_json(
             _PROMPT.format(
