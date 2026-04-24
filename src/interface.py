@@ -50,7 +50,7 @@ def _resolve_exports(exports_dir: str) -> str:
     return str(p)
 
 
-def _run_pipeline(from_step, only_step, scene_id, exports_dir):
+def _run_pipeline(from_step, only_step, scene_id, exports_dir, skip_translation=False):
     global _pipeline_running, _pipeline_proc, _pipeline_exit_code
     _pipeline_running = True
     _pipeline_exit_code = None
@@ -63,6 +63,8 @@ def _run_pipeline(from_step, only_step, scene_id, exports_dir):
         cmd += ["--from-step", str(from_step)]
     if scene_id.strip():
         cmd += ["--scene", scene_id.strip()]
+    if skip_translation:
+        cmd += ["--skip-translation"]
 
     _pipeline_log.append(f"[cmd] {' '.join(cmd)}")
     _pipeline_log.append(f"[python exists] {Path(PYTHON).exists()}")
@@ -91,7 +93,7 @@ def _run_pipeline(from_step, only_step, scene_id, exports_dir):
         _pipeline_proc = None
 
 
-def start_pipeline(from_step, only_step_str, scene_id, exports_dir):
+def start_pipeline(from_step, only_step_str, scene_id, exports_dir, skip_translation):
     import time
     if _pipeline_running:
         yield "Pipeline already running…", get_pipeline_log()
@@ -99,7 +101,7 @@ def start_pipeline(from_step, only_step_str, scene_id, exports_dir):
     only_step = int(only_step_str) if only_step_str.strip() else None
     threading.Thread(
         target=_run_pipeline,
-        args=(from_step, only_step, scene_id, exports_dir),
+        args=(from_step, only_step, scene_id, exports_dir, skip_translation),
         daemon=True,
     ).start()
     time.sleep(0.2)
@@ -509,6 +511,11 @@ with gr.Blocks(title="RP_IA") as app:
                 )
 
             with gr.Row():
+                skip_translation_cb = gr.Checkbox(
+                    value=False,
+                    label="Pas de traduction (corpus en langue originale)",
+                    scale=2,
+                )
                 run_btn  = gr.Button("Run Pipeline", variant="primary", scale=2)
                 stop_btn = gr.Button("Stop", variant="stop", scale=1)
                 status   = gr.Textbox(label="Status", interactive=False, scale=3)
@@ -522,7 +529,7 @@ with gr.Blocks(title="RP_IA") as app:
 
             run_btn.click(
                 start_pipeline,
-                [from_step_slider, only_step_input, scene_input, exports_input],
+                [from_step_slider, only_step_input, scene_input, exports_input, skip_translation_cb],
                 [status, log_box],
             )
             stop_btn.click(stop_pipeline, outputs=status)

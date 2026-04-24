@@ -130,6 +130,7 @@ def run_pipeline(
     from_step: int = 1,
     only_step: int | None = None,
     only_scene: str | None = None,
+    skip_translation: bool = False,
 ):
     def should_run(step: int) -> bool:
         if only_step is not None:
@@ -141,8 +142,11 @@ def run_pipeline(
         run_purge(Path(exports_dir), PURGED_DIR)
 
     if should_run(2):
-        print("\n== STEP 2 - TRANSLATE ==")
-        run_translate(PURGED_DIR, TRANSLATED_DIR, exports_dir=Path(exports_dir))
+        if skip_translation:
+            print("\n== STEP 2 - PASSTHROUGH (no translation) ==")
+        else:
+            print("\n== STEP 2 - TRANSLATE ==")
+        run_translate(PURGED_DIR, TRANSLATED_DIR, exports_dir=Path(exports_dir), passthrough=skip_translation)
 
     if should_run(3):
         print("\n== STEP 3 - SUBDIVIDE ==")
@@ -186,7 +190,9 @@ if __name__ == "__main__":
     parser.add_argument("--only-step", type=int, default=None, dest="only_step",
                         help="Run only step N (1-6)")
     parser.add_argument("--scene", type=str, default=None,
-                        help="Process only this scene ID (step 6)")
+                        help="Process only this scene ID (step 5)")
+    parser.add_argument("--skip-translation", action="store_true", dest="skip_translation",
+                        help="Skip LLM translation — use original content as-is (content_en = content)")
     args = parser.parse_args()
 
     run_pipeline(
@@ -194,4 +200,5 @@ if __name__ == "__main__":
         from_step=args.from_step,
         only_step=args.only_step,
         only_scene=args.scene,
+        skip_translation=args.skip_translation,
     )

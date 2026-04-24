@@ -1,4 +1,4 @@
-"""Step 3 - Subdivide: group messages into scenes, verify coherence, split if needed."""
+"""Step 3 - Subdivide: group messages into scenes, split agglomerates in one LLM pass."""
 
 import json
 import sys
@@ -8,20 +8,22 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
 
-_COHERENCE_PROMPT = """\
-You are analyzing a sequence of RP messages to determine scene coherence.
+_SPLIT_PROMPT = """\
+You are analyzing a sequence of RP messages. Find ALL scene boundaries.
 
-Does this sequence form ONE coherent scene (same location, same main characters, same narrative arc)?
-Or does it contain MULTIPLE distinct scenes chained together (location change, character group split, clear narrative break)?
+A NEW scene starts when ANY of the following occurs:
+- The active character group changes (different characters now on stage)
+- The location changes (they move elsewhere, or a new group appears elsewhere)
+- A clear narrative break: timeskip, topic shift, end of one arc and start of another
+- Parallel scenes: group A in location X while group B is simultaneously in location Y
 
-Note: simultaneous parallel contexts (group A in location X while group B in location Y) count as MULTIPLE scenes.
+Return the index of the FIRST message of each new scene.
+If this is already ONE continuous scene, return an empty list.
 
-If multiple scenes, return the index of the FIRST message of the second scene.
+JSON: {{"boundaries": [5, 12, 23], "reasons": ["char group split", "location change", "timeskip"]}}
+  or: {{"boundaries": []}} if single scene
 
-JSON: {{"coherent": true, "split_at": null}}
-  or: {{"coherent": false, "split_at": 12, "reason": "location change / character split / theme break"}}
-
-Messages (showing first 100 chars each):
+Messages (first 150 chars each):
 {messages}"""
 
 
@@ -30,29 +32,42 @@ def _scene_text(messages: list[dict]) -> str:
     for i, msg in enumerate(messages):
         author = msg.get("author", {})
         name = author.get("name", "?") if isinstance(author, dict) else str(author)
-        content = (msg.get("content_en") or msg.get("content", ""))[:100]
+        content = (msg.get("content_en") or msg.get("content", ""))[:150]
         lines.append(f"[{i}] {name}: {content}")
     return "\n".join(lines)
 
 
-def _subdivide(messages: list[dict], depth: int = 0) -> list[list[dict]]:
-    if len(messages) < 6 or depth > 3:
+def _subdivide(messages: list[dict]) -> list[list[dict]]:
+    if len(messages) < 4:
         return [messages]
 
     data = call_llm_json(
-        _COHERENCE_PROMPT.format(messages=_scene_text(messages)),
-        num_predict=80,
+        _SPLIT_PROMPT.format(messages=_scene_text(messages)),
+        num_predict=200,
     )
 
-    if data.get("coherent", True):
+    raw_boundaries = data.get("boundaries") or []
+    reasons = data.get("reasons") or []
+
+    boundaries = sorted(set(
+        b for b in raw_boundaries
+        if isinstance(b, int) and 1 <= b < len(messages)
+    ))
+
+    if not boundaries:
         return [messages]
 
-    split_at = data.get("split_at")
-    if not isinstance(split_at, int) or not (1 <= split_at < len(messages) - 1):
-        return [messages]
+    for i, b in enumerate(boundaries):
+        reason = reasons[i] if i < len(reasons) else ""
+        print(f"    split at [{b}]" + (f" — {reason}" if reason else ""))
 
-    print(f"  {'  ' * depth}split at msg {split_at} - {data.get('reason', '')}")
-    return _subdivide(messages[:split_at], depth + 1) + _subdivide(messages[split_at:], depth + 1)
+    segments = []
+    prev = 0
+    for b in boundaries:
+        segments.append(messages[prev:b])
+        prev = b
+    segments.append(messages[prev:])
+    return [s for s in segments if s]
 
 
 def _group_by_scene_tag(messages: list[dict]) -> list[list[dict]]:
@@ -143,15 +158,6 @@ def run_subdivide(translated_dir: Path, out_dir: Path, purged_dir: Path | None =
         with open(fp, encoding="utf-8") as f:
             data = json.load(f)
         messages = data.get("messages", data) if isinstance(data, dict) else data
-        foundRpMarker = False 
-        for m in messages: 
-            if "*" in m:
-                foundRpMarker = True; break 
-        
-        if not foundRpMarker:
-            print("no rp marker found skip...")
-            continue
-
         pre_scenes = _group_by_scene_tag(messages)
         processed = manifest.get("processed", {})  # {str(pre_idx): sub_scene_count}
         scene_idx = sum(processed.values())

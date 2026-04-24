@@ -63,7 +63,40 @@ def _save(out_path: Path, messages: list[dict]):
     )
 
 
-def run_translate(purged_dir: Path, out_dir: Path, exports_dir: Path | None = None) -> list[Path]:
+def run_passthrough(purged_dir: Path, out_dir: Path) -> list[Path]:
+    """Copy purged files to translated dir with content_en = content (no LLM call)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    files = list(purged_dir.glob("**/*.json"))
+    if not files:
+        _log(f"  No purged files found in {purged_dir}")
+        return []
+
+    produced = []
+    for fp in files:
+        out_path = out_dir / fp.name
+        if out_path.exists() and _is_valid_json(out_path):
+            _log(f"  [skip] {fp.name} -> already done")
+            produced.append(out_path)
+            continue
+        if not _is_valid_json(fp):
+            _log(f"  [error] {fp.name} is malformed, skipping")
+            continue
+        with open(fp, encoding="utf-8") as f:
+            data = json.load(f)
+        messages = data.get("messages", data) if isinstance(data, dict) else data
+        for msg in messages:
+            if not msg.get("content_en"):
+                msg["content_en"] = msg.get("content", "")
+        _save(out_path, messages)
+        _log(f"  [passthrough] {fp.name}: {len(messages)} messages")
+        produced.append(out_path)
+    return produced
+
+
+def run_translate(purged_dir: Path, out_dir: Path, exports_dir: Path | None = None, passthrough: bool = False) -> list[Path]:
+    if passthrough:
+        return run_passthrough(purged_dir, out_dir)
+
     out_dir.mkdir(parents=True, exist_ok=True)
     files = list(purged_dir.glob("**/*.json"))
     if not files:
