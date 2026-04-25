@@ -131,28 +131,30 @@ def update_scene_entry(lore_dir: Path, scene_id: str, who: dict, what: dict, how
     lore_how   = _load_lore_how(lore_how_path)
     scenes_data = lore_how.setdefault("scenes", {})
 
-    # Build corrected entry from analysis results
-    char_actions = []
-    for char in (who.get("details") or []):
-        name = char.get("canonical_name") or char.get("name") or ""
-        if not name:
-            continue
-        # Use emotional polarity as a short action descriptor if no better source
-        emotions = ", ".join((char.get("emotional_polarity") or {}).get("dominant_emotions") or [])
-        action = emotions or "present"
-        char_actions.append({"name": name, "action": action})
+    # Characters: names present in this scene + first relevant action from what.events
+    char_names = [c for c in (who.get("characters") or []) if c]
+    char_action_map: dict[str, str] = {}
+    for event in (what.get("events") or []):
+        desc = (event.get("description") or "")[:80]
+        for char in (event.get("characters") or []):
+            if char and char not in char_action_map and desc:
+                char_action_map[char] = desc
+    char_actions = [
+        {"name": name, "action": char_action_map.get(name, "present")}
+        for name in char_names
+    ]
 
-    tensions = []
-    context_synth = str(how.get("context_synthesis") or "")
-    if context_synth:
-        tensions.append(context_synth)
-    for rel in (how.get("character_relations") or [])[:3]:
-        desc = rel.get("description") or ""
-        if desc:
-            tensions.append(desc[:120])
+    # Tensions: only revelations and decisions from THIS scene — no cross-scene synthesis
+    tensions = [
+        (event.get("description") or "")[:120]
+        for event in (what.get("events") or [])
+        if event.get("type") in ("revelation", "decision") and event.get("description")
+    ]
+
+    narrative = str(what.get("summary") or scenes_data.get(scene_id, {}).get("narrative") or "")
 
     entry = {
-        "narrative":  str(what.get("summary") or scenes_data.get(scene_id, {}).get("narrative") or ""),
+        "narrative":  narrative,
         "characters": char_actions,
         "tensions":   tensions[:4],
         "_corrected": True,

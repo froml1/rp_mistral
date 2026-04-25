@@ -127,7 +127,10 @@ def _format_who_details(who: dict) -> str:
         name = c.get("canonical_name", "")
         psych = c.get("description_psychological", "")
         locs = ", ".join((c.get("main_locations") or [])[:3])
-        rels = ", ".join((c.get("relations") or [])[:3])
+        rels = ", ".join(
+            f"{r.get('character', '')} ({r.get('relation', '')})" if isinstance(r, dict) else str(r)
+            for r in (c.get("relations") or [])[:3]
+        )
         parts.append(f"- {name}: {psych[:80]}" + (f" [locations: {locs}]" if locs else ""))
         parts.append(f"- {name}: {psych[:80]}" + (f" [rels: {rels}]" if rels else ""))
     return "\n".join(parts)
