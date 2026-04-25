@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from llm import call_llm_json
 from steps.manual_lore import load_manual_events, merge_manual_into_what
 from steps.synthesis import synthesis_context_block
-from steps.scene_patch import write_enrichment
+from steps.scene_patch import write_enrichment, chunk_messages
 
 
 def _is_valid_json(path: Path) -> bool:
@@ -87,30 +87,39 @@ def run_what(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who:
     with open(scene_file, encoding="utf-8") as f:
         scene = json.load(f)
 
-    scene_id = scene["scene_id"]
-    text = _scene_text(scene["messages"])
+    scene_id  = scene["scene_id"]
+    messages  = scene["messages"]
 
-    when_ctx  = f"Time of day: {when.get('time_of_day')}. Duration: {when.get('duration')}. {when.get('summary', '')}"
-    where_ctx = f"Locations: {', '.join(where.get('locations') or [])}. Changes: {where.get('location_changes')}"
-    who_ctx   = f"Characters present: {', '.join(who.get('characters') or [])}"
-    which_ctx = ", ".join(which.get("concepts") or []) or "none identified"
+    when_ctx      = f"Time of day: {when.get('time_of_day')}. Duration: {when.get('duration')}. {when.get('summary', '')}"
+    where_ctx     = f"Locations: {', '.join(where.get('locations') or [])}. Changes: {where.get('location_changes')}"
+    who_ctx       = f"Characters present: {', '.join(who.get('characters') or [])}"
+    which_ctx     = ", ".join(which.get("concepts") or []) or "none identified"
     narrative_ctx = synthesis_context_block(lore_dir, current_scene_id=scene_id) if lore_dir else "none"
 
-    result = call_llm_json(
-        _PROMPT.format(
-            narrative_context=narrative_ctx,
-            when=when_ctx, where=where_ctx, who=who_ctx, which=which_ctx, text=text,
-        ),
-        num_predict=3072,
-        num_ctx=8192,
-    )
+    chunks = chunk_messages(messages)
+    if len(chunks) > 1:
+        print(f"    what: {len(chunks)} chunks")
+    raw_results = [
+        call_llm_json(
+            _PROMPT.format(
+                narrative_context=narrative_ctx,
+                when=when_ctx, where=where_ctx, who=who_ctx, which=which_ctx,
+                text=_scene_text(chunk),
+            ),
+            num_predict=3072,
+            num_ctx=8192,
+        )
+        for chunk in chunks
+    ]
 
+    all_events = [
+        e for r in raw_results for e in (r.get("events") or [])
+        if isinstance(e, dict) and e.get("description")
+    ]
+    summaries = [str(r.get("summary") or "") for r in raw_results if r.get("summary")]
     output = {
-        "summary": str(result.get("summary") or ""),
-        "events":  [
-            e for e in (result.get("events") or [])
-            if isinstance(e, dict) and e.get("description")
-        ],
+        "summary": " ".join(summaries),
+        "events":  all_events,
     }
     output = merge_manual_into_what(output, load_manual_events(scene_id))
 

@@ -33,6 +33,25 @@ def write_enrichment(scene_file: Path, step: str, data: dict) -> None:
     scene_file.write_text(json.dumps(scene, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+CHUNK_SIZE    = 40   # messages per analysis chunk
+CHUNK_OVERLAP = 5    # messages shared between adjacent chunks
+
+
+def chunk_messages(messages: list[dict]) -> list[list[dict]]:
+    """Split messages into overlapping chunks for long-scene analysis."""
+    if len(messages) <= CHUNK_SIZE:
+        return [messages]
+    chunks: list[list[dict]] = []
+    start = 0
+    while start < len(messages):
+        end = min(start + CHUNK_SIZE, len(messages))
+        chunks.append(messages[start:end])
+        if end == len(messages):
+            break
+        start = end - CHUNK_OVERLAP
+    return chunks
+
+
 def format_inconsistencies(enrichments: dict) -> str:
     """Format all known inconsistencies from prior steps for injection into a prompt."""
     lines = []

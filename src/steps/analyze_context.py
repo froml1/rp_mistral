@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from llm import call_llm_json
 from steps.manual_lore import load_manual_place, load_all_manual_places, merge_manual_into_place
 from steps.synthesis import synthesis_context_block
-from steps.scene_patch import write_enrichment
+from steps.scene_patch import write_enrichment, chunk_messages
 from lore_summary import update_summary
 try:
     from store import upsert as _store_upsert
@@ -129,6 +129,49 @@ def _merge_place(existing: dict, extracted: dict, scene_id: str) -> dict:
     return merged
 
 
+def _merge_context(results: list[dict]) -> dict:
+    if len(results) == 1:
+        return results[0]
+    whens  = [r.get("when")  or {} for r in results]
+    wheres = [r.get("where") or {} for r in results]
+
+    merged_when = {
+        "summary":     " ".join(w.get("summary", "")    for w in whens if w.get("summary")),
+        "duration":    next((w["duration"]    for w in whens if w.get("duration")    and w["duration"]    != "unknown"), "unknown"),
+        "time_of_day": next((w["time_of_day"] for w in whens if w.get("time_of_day") and w["time_of_day"] != "unknown"), "unknown"),
+        "time_scales": list(dict.fromkeys(t for w in whens for t in (w.get("time_scales") or []))),
+        "time_gaps":   list(dict.fromkeys(t for w in whens for t in (w.get("time_gaps")   or []))),
+    }
+
+    loc_map: dict[str, dict] = {}
+    for w in wheres:
+        for loc in (w.get("locations") or []):
+            name = (loc.get("canonical_name") or "").lower()
+            if not name:
+                continue
+            if name not in loc_map:
+                loc_map[name] = dict(loc)
+            else:
+                ex = loc_map[name]
+                seen_apps  = {a.lower() for a in (ex.get("appellations") or [])}
+                seen_attrs = {a.lower() for a in (ex.get("attributes")   or [])}
+                for a in (loc.get("appellations") or []):
+                    if a.lower() not in seen_apps:
+                        ex.setdefault("appellations", []).append(a.lower()); seen_apps.add(a.lower())
+                for a in (loc.get("attributes") or []):
+                    if a.lower() not in seen_attrs:
+                        ex.setdefault("attributes", []).append(a.lower()); seen_attrs.add(a.lower())
+                if len(loc.get("description", "")) > len(ex.get("description", "")):
+                    ex["description"] = loc["description"]
+
+    incs = [i for r in results for i in (r.get("inconsistencies") or []) if isinstance(i, dict)]
+    return {
+        "when":            merged_when,
+        "where":           {"locations": list(loc_map.values()), "location_changes": any(w.get("location_changes") for w in wheres)},
+        "inconsistencies": incs,
+    }
+
+
 def run_context(scene_file: Path, analysis_dir: Path, places_dir: Path, lore_dir: Path | None = None) -> tuple[dict, dict]:
     """Returns (when_dict, where_dict). Writes when.json and where.json."""
     when_path  = analysis_dir / "when.json"
@@ -152,7 +195,7 @@ def run_context(scene_file: Path, analysis_dir: Path, places_dir: Path, lore_dir
         scene = json.load(f)
 
     scene_id = scene["scene_id"]
-    text = _scene_text(scene["messages"])
+    messages = scene["messages"]
 
     # Known places with manual overrides
     known = {}
@@ -166,14 +209,19 @@ def run_context(scene_file: Path, analysis_dir: Path, places_dir: Path, lore_dir
         known[name] = merge_manual_into_place(known.get(name, {}), mp) if name in known else mp
 
     known_yaml = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known.items()) or "none"
-    result = call_llm_json(
-        _PROMPT.format(
-            synthesis=synthesis_context_block(lore_dir, current_scene_id=scene_id) if lore_dir else "none",
-            known_yaml=known_yaml,
-            text=text,
-        ),
-        num_predict=2048,
-    )
+    synthesis  = synthesis_context_block(lore_dir, current_scene_id=scene_id) if lore_dir else "none"
+
+    chunks  = chunk_messages(messages)
+    results = [
+        call_llm_json(
+            _PROMPT.format(synthesis=synthesis, known_yaml=known_yaml, text=_scene_text(chunk)),
+            num_predict=2048,
+        )
+        for chunk in chunks
+    ]
+    if len(chunks) > 1:
+        print(f"    context: {len(chunks)} chunks")
+    result = _merge_context(results)
 
     # — When —
     raw_when = result.get("when") or {}

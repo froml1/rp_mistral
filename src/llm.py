@@ -33,8 +33,27 @@ def call_llm(prompt: str, fmt: str | None = None, num_predict: int = -1, num_ctx
 
 def call_llm_json(prompt: str, num_predict: int = 512, num_ctx: int = 8192) -> dict:
     raw = call_llm(prompt, fmt="json", num_predict=num_predict, num_ctx=num_ctx)
+    if not raw:
+        return {}
     try:
-        data = json.loads(raw)
+        return json.loads(raw)
+    except Exception:
+        pass
+    # Truncated JSON — try to salvage a partial object by closing open braces
+    salvaged = raw.rstrip()
+    open_braces  = salvaged.count("{") - salvaged.count("}")
+    open_brackets = salvaged.count("[") - salvaged.count("]")
+    # Close any unterminated string first
+    if salvaged and salvaged[-1] not in ('"', '}', ']'):
+        # Drop the last incomplete token (could be a partial string or value)
+        for i in range(len(salvaged) - 1, -1, -1):
+            if salvaged[i] in (',', '{', '[', ':'):
+                salvaged = salvaged[:i]
+                break
+    salvaged += "]" * max(0, open_brackets) + "}" * max(0, open_braces)
+    try:
+        data = json.loads(salvaged)
+        print("    [llm] recovered partial JSON", flush=True)
         return data
     except Exception:
         return {}

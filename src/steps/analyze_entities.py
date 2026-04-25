@@ -15,7 +15,7 @@ from steps.manual_lore import (
     load_manual_concept, load_all_manual_concepts, merge_manual_into_concept,
 )
 from steps.synthesis import synthesis_context_block
-from steps.scene_patch import write_enrichment
+from steps.scene_patch import write_enrichment, chunk_messages
 from lore_summary import update_summary, summaries_for_dir
 try:
     from store import upsert as _store_upsert
@@ -316,6 +316,62 @@ def _merge_relations(existing: list, new_rels: list) -> list:
     return result
 
 
+def _merge_entities(results: list[dict]) -> dict:
+    if len(results) == 1:
+        return results[0]
+    # Merge characters by canonical_name
+    char_map: dict[str, dict] = {}
+    for r in results:
+        for c in (r.get("characters") or []):
+            if not isinstance(c, dict) or not c.get("canonical_name"):
+                continue
+            name = c["canonical_name"].lower()
+            if name not in char_map:
+                char_map[name] = dict(c)
+            else:
+                ex = char_map[name]
+                for field in ("description_physical", "description_psychological", "job", "author"):
+                    v = (c.get(field) or "").strip()
+                    if v and len(v) > len(ex.get(field) or ""):
+                        ex[field] = v
+                for field in ("appellations", "likes", "dislikes", "beliefs", "main_locations", "misc"):
+                    existing_low = {x.lower() for x in (ex.get(field) or [])}
+                    for item in (c.get(field) or []):
+                        if item and item.lower() not in existing_low:
+                            ex.setdefault(field, []).append(item)
+                            existing_low.add(item.lower())
+                ex["relations"] = _merge_relations(ex.get("relations") or [], c.get("relations") or [])
+
+    # Merge concepts by canonical_name
+    concept_map: dict[str, dict] = {}
+    for r in results:
+        for c in (r.get("concepts") or []):
+            if not isinstance(c, dict) or not c.get("canonical_name"):
+                continue
+            name = c["canonical_name"].lower()
+            if name not in concept_map:
+                concept_map[name] = dict(c)
+            else:
+                ex = concept_map[name]
+                if len(c.get("description", "")) > len(ex.get("description", "")):
+                    ex["description"] = c["description"]
+
+    a2c: dict[str, str] = {}
+    for r in results:
+        a2c.update(r.get("author_to_character") or {})
+
+    ooc = list(dict.fromkeys(i for r in results for i in (r.get("ooc_messages") or []) if isinstance(i, int)))
+    incs = [i for r in results for i in (r.get("inconsistencies") or []) if isinstance(i, dict)]
+
+    return {
+        "characters":         list(char_map.values()),
+        "concepts":           list(concept_map.values()),
+        "author_to_character": a2c,
+        "ooc_messages":       ooc,
+        "inconsistencies":    incs,
+    }
+
+
 def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts_dir: Path, lore_dir: Path | None = None) -> tuple[dict, dict]:
     """Returns (who_dict, which_dict). Writes who.json and which.json."""
     who_path   = analysis_dir / "who.json"
@@ -371,19 +427,28 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
 
     known_chars_yaml    = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known_chars.items())    or "none"
     known_concepts_yaml = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known_concepts.items()) or "none"
+    synthesis           = synthesis_context_block(lore_dir, current_scene_id=scene_id) if lore_dir else "none"
+    authors_str         = ", ".join(authors)
 
-    result = call_llm_json(
-        _PROMPT.format(
-            authors=", ".join(authors),
-            synthesis=synthesis_context_block(lore_dir, current_scene_id=scene_id) if lore_dir else "none",
-            author_hints=_author_hints(messages),
-            known_chars_yaml=known_chars_yaml,
-            known_concepts_yaml=known_concepts_yaml,
-            text=text,
-        ),
-        num_predict=4096,
-        num_ctx=8192,
-    )
+    chunks = chunk_messages(messages)
+    if len(chunks) > 1:
+        print(f"    entities: {len(chunks)} chunks")
+    raw_results = [
+        call_llm_json(
+            _PROMPT.format(
+                authors=authors_str,
+                synthesis=synthesis,
+                author_hints=_author_hints(chunk),
+                known_chars_yaml=known_chars_yaml,
+                known_concepts_yaml=known_concepts_yaml,
+                text=_scene_text(chunk),
+            ),
+            num_predict=4096,
+            num_ctx=8192,
+        )
+        for chunk in chunks
+    ]
+    result = _merge_entities(raw_results)
 
     # — Characters —
     authors_lower = {a.lower() for a in authors}

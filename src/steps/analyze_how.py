@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
 from steps.synthesis import synthesis_context_block
-from steps.scene_patch import read_enrichments, write_enrichment, format_inconsistencies
+from steps.scene_patch import read_enrichments, write_enrichment, format_inconsistencies, chunk_messages
 
 
 def _is_valid_json(path: Path) -> bool:
@@ -163,7 +163,7 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
         scene = json.load(f)
 
     scene_id = scene["scene_id"]
-    text     = _scene_text(scene["messages"])
+    messages = scene["messages"]
 
     # Read enrichments written by prior steps (entities, context, what)
     enrichments = read_enrichments(scene_file)
@@ -176,7 +176,6 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
         {k: v for k, v in enrichments.items() if k != "how"}
     )
 
-    # Prefer pre-computed synthesis (stable, full-corpus view) over rolling how_context
     if lore_dir is not None:
         recent_ctx = synthesis_context_block(lore_dir, current_scene_id=scene_id)
     else:
@@ -189,33 +188,57 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
         e.get("description", "") for e in (what.get("events") or [])[:10]
     )
 
-    result = call_llm_json(
-        _PROMPT.format(
-            when=f"{when.get('time_of_day')} / {when.get('duration')}",
-            where_details=_format_where_details(where),
-            who_details=_format_who_details(who),
-            speaker_attribution=speaker_attribution,
-            which=", ".join(which.get("concepts") or []) or "none",
-            what=events_summary,
-            how_context=recent_ctx,
-            narrative_axes=_load_narrative_axes(),
-            prior_inconsistencies=prior_inconsistencies,
-            text=text,
-        ),
-        num_predict=3072,
-        num_ctx=8192,
-    )
+    def _call_chunk(chunk):
+        return call_llm_json(
+            _PROMPT.format(
+                when=f"{when.get('time_of_day')} / {when.get('duration')}",
+                where_details=_format_where_details(where),
+                who_details=_format_who_details(who),
+                speaker_attribution=speaker_attribution,
+                which=", ".join(which.get("concepts") or []) or "none",
+                what=events_summary,
+                how_context=recent_ctx,
+                narrative_axes=_load_narrative_axes(),
+                prior_inconsistencies=prior_inconsistencies,
+                text=_scene_text(chunk),
+            ),
+            num_predict=3072,
+            num_ctx=8192,
+        )
+
+    chunks = chunk_messages(messages)
+    if len(chunks) > 1:
+        print(f"    how: {len(chunks)} chunks")
+    raw_results = [_call_chunk(chunk) for chunk in chunks]
+
+    # Merge links (deduplicate by from+to)
+    seen_links: set[tuple] = set()
+    merged_links = []
+    for r in raw_results:
+        for l in (r.get("links") or []):
+            if not isinstance(l, dict) or not l.get("description"):
+                continue
+            key = (l.get("from_element", "").lower(), l.get("to_element", "").lower())
+            if key not in seen_links:
+                merged_links.append(l); seen_links.add(key)
+
+    # Merge character_relations (deduplicate by from+to+type)
+    seen_rels: set[tuple] = set()
+    merged_rels = []
+    for r in raw_results:
+        for rel in (r.get("character_relations") or []):
+            if not isinstance(rel, dict) or not rel.get("from_char") or not rel.get("to_char"):
+                continue
+            key = (rel.get("from_char", "").lower(), rel.get("to_char", "").lower(), rel.get("relation_type", "").lower())
+            if key not in seen_rels:
+                merged_rels.append(rel); seen_rels.add(key)
+
+    synthesis_parts = [str(r.get("context_synthesis") or "") for r in raw_results if r.get("context_synthesis")]
 
     output = {
-        "links": [
-            l for l in (result.get("links") or [])
-            if isinstance(l, dict) and l.get("description")
-        ],
-        "character_relations": [
-            r for r in (result.get("character_relations") or [])
-            if isinstance(r, dict) and r.get("from_char") and r.get("to_char")
-        ],
-        "context_synthesis": str(result.get("context_synthesis") or ""),
+        "links":               merged_links,
+        "character_relations": merged_rels,
+        "context_synthesis":   " ".join(synthesis_parts),
     }
 
     incs = [i for i in (result.get("inconsistencies") or []) if isinstance(i, dict) and i.get("description")]
