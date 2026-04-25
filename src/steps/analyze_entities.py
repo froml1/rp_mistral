@@ -53,6 +53,9 @@ IMPORTANT: Discord authors (who write the messages) are NOT characters. Authors 
 STORY SYNTHESIS (use to anchor character identity — do not merge distinct characters):
 {synthesis}
 
+CHARACTERS AND CONCEPTS ALREADY IDENTIFIED IN EARLIER PARTS OF THIS SAME SCENE (use to resolve pronouns and references — do not duplicate):
+{prior_chunk_context}
+
 Discord authors and what they write (use this to identify which author plays which character):
 {author_hints}
 
@@ -433,11 +436,14 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
     chunks = chunk_messages(messages)
     if len(chunks) > 1:
         print(f"    entities: {len(chunks)} chunks")
-    raw_results = [
-        call_llm_json(
+    raw_results = []
+    prior_chunk_context = "none"
+    for chunk in chunks:
+        r = call_llm_json(
             _PROMPT.format(
                 authors=authors_str,
                 synthesis=synthesis,
+                prior_chunk_context=prior_chunk_context,
                 author_hints=_author_hints(chunk),
                 known_chars_yaml=known_chars_yaml,
                 known_concepts_yaml=known_concepts_yaml,
@@ -446,8 +452,17 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
             num_predict=4096,
             num_ctx=8192,
         )
-        for chunk in chunks
-    ]
+        raw_results.append(r)
+        # Build context for next chunk: names + roles found so far
+        char_lines = [
+            f"- {c.get('canonical_name', '')} ({c.get('job', '') or c.get('description_psychological', '')[:40]})"
+            for c in (r.get("characters") or []) if c.get("canonical_name")
+        ]
+        concept_lines = [
+            f"- {c.get('canonical_name', '')} [{c.get('type', '')}]"
+            for c in (r.get("concepts") or []) if c.get("canonical_name")
+        ]
+        prior_chunk_context = "\n".join(char_lines + concept_lines) or "none"
     result = _merge_entities(raw_results)
 
     # — Characters —

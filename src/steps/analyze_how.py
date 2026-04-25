@@ -49,6 +49,9 @@ Ongoing narrative axes (from general analysis):
 Known inconsistencies flagged by prior analysis steps:
 {prior_inconsistencies}
 
+LINKS AND RELATIONS ALREADY IDENTIFIED IN EARLIER PARTS OF THIS SAME SCENE (do not duplicate):
+{prior_chunk_context}
+
 Produce FOUR things:
 
 1. ELEMENT LINKS — causal and enabling links between any elements (who, where, which, what):
@@ -188,7 +191,7 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
         e.get("description", "") for e in (what.get("events") or [])[:10]
     )
 
-    def _call_chunk(chunk):
+    def _call_chunk(chunk, prior_chunk_context="none"):
         return call_llm_json(
             _PROMPT.format(
                 when=f"{when.get('time_of_day')} / {when.get('duration')}",
@@ -200,6 +203,7 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
                 how_context=recent_ctx,
                 narrative_axes=_load_narrative_axes(),
                 prior_inconsistencies=prior_inconsistencies,
+                prior_chunk_context=prior_chunk_context,
                 text=_scene_text(chunk),
             ),
             num_predict=3072,
@@ -209,7 +213,16 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
     chunks = chunk_messages(messages)
     if len(chunks) > 1:
         print(f"    how: {len(chunks)} chunks")
-    raw_results = [_call_chunk(chunk) for chunk in chunks]
+    raw_results = []
+    prior_chunk_context = "none"
+    for chunk in chunks:
+        raw_results.append(_call_chunk(chunk, prior_chunk_context))
+        r = raw_results[-1]
+        rel_lines = [
+            f"- {rel.get('from_char')} {rel.get('relation_type')} {rel.get('to_char')}"
+            for rel in (r.get("character_relations") or [])[:5] if rel.get("from_char")
+        ]
+        prior_chunk_context = "\n".join(rel_lines) or "none"
 
     # Merge links (deduplicate by from+to)
     seen_links: set[tuple] = set()

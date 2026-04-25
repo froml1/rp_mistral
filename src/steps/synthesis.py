@@ -22,7 +22,6 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
-from steps.scene_patch import chunk_messages
 
 LORE_HOW_FILE = "lore_how.yaml"
 
@@ -31,7 +30,7 @@ Read this scene from a text-based roleplay and extract the three fields below IN
 
 Characters speak in dialogue and perform *actions written between asterisks*.
 
-PRIOR SCENES (use to recognize recurring characters — do not invent):
+PRIOR SCENES (use to recognise recurring characters — do not invent):
 {prior_context}
 
 1. characters — every character ACTIVE in this scene (speaking or performing *actions*).
@@ -64,42 +63,13 @@ Scene:
 ---"""
 
 
-def _scene_text(messages: list[dict]) -> str:
+def _scene_text(messages: list[dict], max_msgs: int = 30) -> str:
     lines = []
-    for m in messages:
+    for m in list(messages)[:max_msgs]:
         author = (m.get("author") or {}).get("name", "?") if isinstance(m.get("author"), dict) else str(m.get("author", "?"))
         content = m.get("content_en") or m.get("content", "")
         lines.append(f"[{author}]: {content}")
     return "\n".join(lines)
-
-
-def _merge_synthesis(results: list[dict]) -> dict:
-    if len(results) == 1:
-        return results[0]
-
-    # Characters: merge by name, keep longest action description
-    char_map: dict[str, dict] = {}
-    for r in results:
-        for c in (r.get("characters") or []):
-            if not isinstance(c, dict) or not c.get("name"):
-                continue
-            name = c["name"].lower()
-            if name not in char_map or len(c.get("action", "")) > len(char_map[name].get("action", "")):
-                char_map[name] = c
-
-    # Tensions: union, deduplicate by lowercased text
-    seen: set[str] = set()
-    tensions: list[str] = []
-    for r in results:
-        for t in (r.get("tensions") or []):
-            t = str(t)
-            if t.lower() not in seen:
-                tensions.append(t); seen.add(t.lower())
-
-    # Narrative: join all chunk narratives in order
-    narrative = " ".join(str(r.get("narrative") or "") for r in results if r.get("narrative"))
-
-    return {"characters": list(char_map.values()), "tensions": tensions, "narrative": narrative}
 
 
 def _load_lore_how(lore_how_path: Path) -> dict:
@@ -138,18 +108,11 @@ def run_synthesis(scenes_dir: Path, lore_dir: Path) -> Path:
             continue
 
         prior_context = synthesis_context_block(lore_dir, current_scene_id=scene_id, window=5)
-        chunks = chunk_messages(messages)
-        if len(chunks) > 1:
-            print(f"    [lore_how] {scene_id}: {len(chunks)} chunks")
-        raw_results = [
-            call_llm_json(
-                _PROMPT.format(prior_context=prior_context, text=_scene_text(chunk)),
-                num_predict=2048,
-                num_ctx=8192,
-            )
-            for chunk in chunks
-        ]
-        result = _merge_synthesis(raw_results)
+        result = call_llm_json(
+            _PROMPT.format(prior_context=prior_context, text=_scene_text(messages)),
+            num_predict=2048,
+            num_ctx=8192,
+        )
 
         entry = {
             "narrative":  str(result.get("narrative") or ""),

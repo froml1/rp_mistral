@@ -38,6 +38,9 @@ CHARACTERS:
 CONCEPTS & THEMES:
 {which}
 
+EVENTS ALREADY IDENTIFIED IN EARLIER PARTS OF THIS SAME SCENE (do not duplicate, use to maintain continuity):
+{prior_chunk_context}
+
 List ALL events without omission:
 - conversations: topics discussed, questions asked, information shared, agreements/disagreements
 - actions: physical actions, movements, gestures
@@ -99,18 +102,24 @@ def run_what(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who:
     chunks = chunk_messages(messages)
     if len(chunks) > 1:
         print(f"    what: {len(chunks)} chunks")
-    raw_results = [
-        call_llm_json(
+    raw_results = []
+    prior_chunk_context = "none"
+    for chunk in chunks:
+        r = call_llm_json(
             _PROMPT.format(
                 narrative_context=narrative_ctx,
                 when=when_ctx, where=where_ctx, who=who_ctx, which=which_ctx,
+                prior_chunk_context=prior_chunk_context,
                 text=_scene_text(chunk),
             ),
             num_predict=3072,
             num_ctx=8192,
         )
-        for chunk in chunks
-    ]
+        raw_results.append(r)
+        prior_events = "; ".join(
+            e.get("description", "")[:60] for e in (r.get("events") or [])[:5] if e.get("description")
+        )
+        prior_chunk_context = prior_events or "none"
 
     all_events = [
         e for r in raw_results for e in (r.get("events") or [])

@@ -53,6 +53,9 @@ LOCATIONS — for each location present:
 
 Also: location_changes: true if the location changes during the scene.
 
+LOCATIONS AND TEMPORAL DATA ALREADY IDENTIFIED IN EARLIER PARTS OF THIS SAME SCENE (do not duplicate):
+{prior_chunk_context}
+
 INCONSISTENCIES — flag any clear problem: a character appearing in an impossible location,
 a location that contradicts the known world, a temporal jump not explained by the narrative, etc.
 inconsistencies: [{{"message_idx": int_or_null, "type": "impossible_location|temporal_gap|location_conflict|other", "description": "..."}}]
@@ -211,16 +214,29 @@ def run_context(scene_file: Path, analysis_dir: Path, places_dir: Path, lore_dir
     known_yaml = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known.items()) or "none"
     synthesis  = synthesis_context_block(lore_dir, current_scene_id=scene_id) if lore_dir else "none"
 
-    chunks  = chunk_messages(messages)
-    results = [
-        call_llm_json(
-            _PROMPT.format(synthesis=synthesis, known_yaml=known_yaml, text=_scene_text(chunk)),
-            num_predict=2048,
-        )
-        for chunk in chunks
-    ]
+    chunks = chunk_messages(messages)
     if len(chunks) > 1:
         print(f"    context: {len(chunks)} chunks")
+    results = []
+    prior_chunk_context = "none"
+    for chunk in chunks:
+        r = call_llm_json(
+            _PROMPT.format(
+                synthesis=synthesis,
+                known_yaml=known_yaml,
+                prior_chunk_context=prior_chunk_context,
+                text=_scene_text(chunk),
+            ),
+            num_predict=2048,
+        )
+        results.append(r)
+        locs = [l.get("canonical_name", "") for l in (r.get("where") or {}).get("locations", []) if l.get("canonical_name")]
+        when = r.get("when") or {}
+        prior_chunk_context = (
+            f"locations: {', '.join(locs) or 'none'} | "
+            f"time_of_day: {when.get('time_of_day', 'unknown')} | "
+            f"duration: {when.get('duration', 'unknown')}"
+        )
     result = _merge_context(results)
 
     # — When —
