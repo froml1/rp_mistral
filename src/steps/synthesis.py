@@ -26,24 +26,31 @@ from llm import call_llm_json
 LORE_HOW_FILE = "lore_how.yaml"
 
 _PROMPT = """\
-Read this scene from a text-based roleplay and produce a detailed narrative summary.
+Read this scene from a text-based roleplay. Extract the information below IN ORDER.
 
 Characters speak in dialogue and perform *actions written between asterisks*.
-Be specific — name characters, places, objects. Capture the emotional atmosphere and stakes.
 
-PRIOR SCENES (use to recognize recurring characters and ongoing tensions — do not invent):
+PRIOR SCENES (use to recognize recurring characters — do not invent):
 {prior_context}
 
-Extract:
-- narrative: 3-4 sentences covering what happens (dialogue topics, *physical actions*, key decisions, emotional tone)
-- characters: for each active character, what they do, say, or feel in this scene (one sentence each)
-- tensions: unresolved conflicts, revelations, emotional stakes, questions left open at scene's end
+Step 1 — List every character who is ACTIVE in this scene (speaking or acting).
+Step 2 — List the unresolved tensions, revelations, or open questions at the scene's end.
+Step 3 — Write a 3-4 sentence narrative summary using what you listed above.
+
+IMPORTANT: characters and tensions MUST be filled. Do not leave them empty.
+IMPORTANT: use only names that appear explicitly in the scene text.
 
 JSON:
 {{
-  "narrative": "",
-  "characters": [{{"name": "", "action": ""}}],
-  "tensions": []
+  "characters": [
+    {{"name": "character full name", "action": "what they do/say/feel in one sentence"}},
+    {{"name": "other character", "action": "their role in this scene"}}
+  ],
+  "tensions": [
+    "unresolved conflict or open question at scene end",
+    "revelation or emotional stake"
+  ],
+  "narrative": "3-4 sentence summary of the scene covering dialogue topics, physical actions, key decisions, and emotional tone."
 }}
 
 Scene:

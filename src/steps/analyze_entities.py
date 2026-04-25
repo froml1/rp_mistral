@@ -387,7 +387,17 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
     )
 
     # — Characters —
-    characters = [c for c in (result.get("characters") or []) if isinstance(c, dict) and c.get("canonical_name")]
+    authors_lower = {a.lower() for a in authors}
+    characters = []
+    for c in (result.get("characters") or []):
+        if not isinstance(c, dict) or not c.get("canonical_name"):
+            continue
+        name = c["canonical_name"].lower().strip()
+        if name in authors_lower:
+            print(f"    [skip] '{c['canonical_name']}' is a Discord author, not a character")
+            continue
+        characters.append(c)
+
     for char in characters:
         existing = _load_char_yaml(chars_dir, char["canonical_name"])
         merged   = _merge_char(existing, char, scene_id)
