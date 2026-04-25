@@ -322,7 +322,7 @@ def run_subdivide(translated_dir: Path, out_dir: Path,
                     "rp_score": rp_score,
                     "rp_flags": rp_flags,
                     "n_msgs":   len(sub),
-                    "preview":  (sub[0].get("content_en") or sub[0].get("content", ""))[:120],
+                    "preview":  ((sub[0].get("content_en") or sub[0].get("content", ""))[:120]) if sub else "",
                 }
                 next_idx += 1
                 continue
