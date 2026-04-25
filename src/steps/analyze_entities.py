@@ -49,7 +49,6 @@ def _is_valid_json(path: Path) -> bool:
 _PROMPT = """\
 Analyze the CHARACTERS and CONCEPTS present in this RP scene in one pass.
 IMPORTANT: Discord authors (who write the messages) are NOT characters. Authors to ignore: {authors}
-IMPORTANT: if the scene is too informal / OOC, return struct with empty character list.
 
 STORY SYNTHESIS (use to anchor character identity — do not merge distinct characters):
 {synthesis}
@@ -382,7 +381,7 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
             known_concepts_yaml=known_concepts_yaml,
             text=text,
         ),
-        num_predict=3072,
+        num_predict=4096,
         num_ctx=8192,
     )
 

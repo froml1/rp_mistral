@@ -30,7 +30,6 @@ def _is_valid_json(path: Path) -> bool:
 
 _PROMPT = """\
 Analyze the TEMPORAL CONTEXT and LOCATIONS of this RP scene in one pass.
-IMPORTANT: if context seams too informal ignore analyse, return struct with empty fields (maybe a casual discussion)
 
 STORY SYNTHESIS (use to anchor location identity — do not confuse distinct places):
 {synthesis}
@@ -173,7 +172,7 @@ def run_context(scene_file: Path, analysis_dir: Path, places_dir: Path, lore_dir
             known_yaml=known_yaml,
             text=text,
         ),
-        num_predict=1024,
+        num_predict=2048,
     )
 
     # — When —

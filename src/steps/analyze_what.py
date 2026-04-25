@@ -22,7 +22,6 @@ def _is_valid_json(path: Path) -> bool:
 _PROMPT = """\
 Based on the analysis context below, produce an EXHAUSTIVE list of everything that happens in this scene.
 
-IMPORTANT: if context seams too informal ignore analyse, return struct with empty fields (maybe a casual discussion)
 
 PRIOR SCENE CONTEXT (what happened before — use to avoid misidentifying characters or events):
 {narrative_context}
@@ -102,7 +101,7 @@ def run_what(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who:
             narrative_context=narrative_ctx,
             when=when_ctx, where=where_ctx, who=who_ctx, which=which_ctx, text=text,
         ),
-        num_predict=2048,
+        num_predict=3072,
         num_ctx=8192,
     )
 

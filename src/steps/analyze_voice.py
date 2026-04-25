@@ -20,7 +20,6 @@ LORE_DIR = Path(__file__).parent.parent.parent / "data" / "lore"
 _PROMPT = """\
 Analyze the SPEECH PATTERNS of character "{name}" based on their lines in this RP scene.
 
-IMPORTANT: if context seams too informal ignore analyse, return struct with empty fields (maybe a casual discussion)
 Character's lines (actions marked with * and dialogue):
 ---
 {char_lines}
@@ -175,7 +174,7 @@ def run_voice(scene_file: Path, analysis_dir: Path, who: dict) -> dict:
 
         result = call_llm_json(
             _PROMPT.format(name=char_name, char_lines=char_lines),
-            num_predict=512,
+            num_predict=1024,
             num_ctx=4096,
         )
 

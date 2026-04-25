@@ -26,31 +26,35 @@ from llm import call_llm_json
 LORE_HOW_FILE = "lore_how.yaml"
 
 _PROMPT = """\
-Read this scene from a text-based roleplay. Extract the information below IN ORDER.
+Read this scene from a text-based roleplay and extract the three fields below IN ORDER.
 
 Characters speak in dialogue and perform *actions written between asterisks*.
 
 PRIOR SCENES (use to recognize recurring characters — do not invent):
 {prior_context}
 
-Step 1 — List every character who is ACTIVE in this scene (speaking or acting).
-Step 2 — List the unresolved tensions, revelations, or open questions at the scene's end.
-Step 3 — Write a 3-4 sentence narrative summary using what you listed above.
+1. characters — every character ACTIVE in this scene (speaking or performing *actions*).
+   For each: their name as it appears in the text, and what they specifically do/say/feel here.
+   MUST NOT be empty. MUST use names from the scene text only.
 
-IMPORTANT: characters and tensions MUST be filled. Do not leave them empty.
-IMPORTANT: use only names that appear explicitly in the scene text.
+2. tensions — unresolved conflicts, revelations, emotional stakes, open questions at scene end.
+   MUST NOT be empty if anything significant is left unresolved.
+
+3. narrative — a detailed, precise summary: dialogue topics, *physical actions*, decisions made,
+   emotional atmosphere, locations mentioned. Be specific — name characters, places, objects.
+   Do NOT summarise what you already listed; instead write a full scene account.
 
 JSON:
 {{
   "characters": [
-    {{"name": "character full name", "action": "what they do/say/feel in one sentence"}},
-    {{"name": "other character", "action": "their role in this scene"}}
+    {{"name": "name as in scene", "action": "what this character does/says/feels in this scene"}},
+    {{"name": "other name", "action": "their role"}}
   ],
   "tensions": [
-    "unresolved conflict or open question at scene end",
-    "revelation or emotional stake"
+    "first unresolved element or revelation",
+    "second stake or open question"
   ],
-  "narrative": "3-4 sentence summary of the scene covering dialogue topics, physical actions, key decisions, and emotional tone."
+  "narrative": "Full detailed account of the scene."
 }}
 
 Scene:

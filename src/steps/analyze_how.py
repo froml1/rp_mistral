@@ -25,7 +25,6 @@ _GENERAL_HOW_YAML = Path(__file__).parent.parent.parent / "data" / "lore" / "gen
 
 _PROMPT = """\
 Based on the full analysis of this scene, identify HOW events unfold: causal links, character relationships/sentiments, and connections between all elements.
-IMPORTANT: if context seams too informal ignore analyse, return struct with empty fields (maybe a casual discussion)
 TEMPORAL: {when}
 
 LOCATIONS (with details):
@@ -203,7 +202,7 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
             prior_inconsistencies=prior_inconsistencies,
             text=text,
         ),
-        num_predict=1536,
+        num_predict=3072,
         num_ctx=8192,
     )
 
