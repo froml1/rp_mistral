@@ -33,7 +33,7 @@ from steps.purge         import run_purge
 from steps.translate     import run_translate
 from steps.subdivide     import run_subdivide
 from steps.clean         import run_clean
-from steps.synthesis     import run_synthesis
+from steps.synthesis     import run_synthesis, update_scene_entry
 from steps.analyze_context  import run_context
 from steps.analyze_entities import run_entities
 from steps.analyze_what     import run_what
@@ -67,7 +67,11 @@ def run_step6(scene_files: list[Path], only_scene: str | None = None):
         when, where = run_context(scene_file, ad, places_dir, lore_dir=LORE_DIR)
         who, which  = run_entities(scene_file, ad, chars_dir, concepts_dir, lore_dir=LORE_DIR)
         what        = run_what(scene_file, ad, when, where, who, which, lore_dir=LORE_DIR)
-        run_how(scene_file, ad, when, where, who, which, what, lore_dir=LORE_DIR)
+        how         = run_how(scene_file, ad, when, where, who, which, what, lore_dir=LORE_DIR)
+        # Correct lore_how.yaml entry with richer analysis data so subsequent scenes
+        # get accurate context (synthesis ran before analysis with only raw text)
+        if what or how:
+            update_scene_entry(LORE_DIR, scene_id, who, what, how)
 
 
 def run_step7(scene_files: list[Path], only_scene: str | None = None):

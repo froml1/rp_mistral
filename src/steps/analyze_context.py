@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from llm import call_llm_json
 from steps.manual_lore import load_manual_place, load_all_manual_places, merge_manual_into_place
 from steps.synthesis import synthesis_context_block
+from steps.scene_patch import write_enrichment
 from lore_summary import update_summary
 try:
     from store import upsert as _store_upsert
@@ -53,6 +54,10 @@ LOCATIONS — for each location present:
 
 Also: location_changes: true if the location changes during the scene.
 
+INCONSISTENCIES — flag any clear problem: a character appearing in an impossible location,
+a location that contradicts the known world, a temporal jump not explained by the narrative, etc.
+inconsistencies: [{{"message_idx": int_or_null, "type": "impossible_location|temporal_gap|location_conflict|other", "description": "..."}}]
+
 JSON:
 {{
   "when": {{
@@ -62,7 +67,8 @@ JSON:
   "where": {{
     "locations": [{{"canonical_name": "", "appellations": [], "description": "", "attributes": [], "is_primary": true}}],
     "location_changes": false
-  }}
+  }},
+  "inconsistencies": []
 }}
 
 Scene:
@@ -202,5 +208,12 @@ def run_context(scene_file: Path, analysis_dir: Path, places_dir: Path, lore_dir
     analysis_dir.mkdir(parents=True, exist_ok=True)
     when_path.write_text(json.dumps(when_out, ensure_ascii=False, indent=2), encoding="utf-8")
     where_path.write_text(json.dumps(where_out, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    incs = [i for i in (result.get("inconsistencies") or []) if isinstance(i, dict) and i.get("description")]
+    if incs:
+        write_enrichment(scene_file, "context", {"inconsistencies": incs})
+        for inc in incs:
+            print(f"    [context] inconsistency: {inc.get('type')} — {inc.get('description')[:80]}")
+
     print(f"    context: {when_out['time_of_day']} / {when_out['duration']} | {len(locations)} location(s)")
     return when_out, where_out

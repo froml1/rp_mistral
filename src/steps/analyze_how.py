@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
 from steps.synthesis import synthesis_context_block
+from steps.scene_patch import read_enrichments, write_enrichment, format_inconsistencies
 
 
 def _is_valid_json(path: Path) -> bool:
@@ -33,6 +34,9 @@ LOCATIONS (with details):
 CHARACTERS (with details):
 {who_details}
 
+SPEAKER ATTRIBUTION (Discord author → character they play in this scene):
+{speaker_attribution}
+
 CONCEPTS: {which}
 
 EVENTS: {what}
@@ -43,7 +47,10 @@ Accumulated context from previous scenes:
 Ongoing narrative axes (from general analysis):
 {narrative_axes}
 
-Produce THREE things:
+Known inconsistencies flagged by prior analysis steps:
+{prior_inconsistencies}
+
+Produce FOUR things:
 
 1. ELEMENT LINKS — causal and enabling links between any elements (who, where, which, what):
    - from_element / to_element: characters, places, concepts, or events
@@ -59,10 +66,15 @@ Produce THREE things:
 
 3. CONTEXT SYNTHESIS — how this scene connects to the broader narrative based on accumulated context.
 
+4. INCONSISTENCIES — any causal contradiction, impossible relation, or logical impossibility you detect
+   in the scene (e.g. character A claims to be allied with B but actions show the opposite).
+   inconsistencies: [{{"message_idx": int_or_null, "type": "contradictory_relation|impossible_causality|character_conflict|other", "description": "..."}}]
+
 JSON: {{
   "links": [{{"from_element": "", "to_element": "", "link_type": "", "description": "", "characters_involved": []}}],
   "character_relations": [{{"from_char": "", "to_char": "", "relation_type": "", "sentiment": "", "description": ""}}],
-  "context_synthesis": ""
+  "context_synthesis": "",
+  "inconsistencies": []
 }}
 
 Scene:
@@ -151,6 +163,17 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
     scene_id = scene["scene_id"]
     text     = _scene_text(scene["messages"])
 
+    # Read enrichments written by prior steps (entities, context, what)
+    enrichments = read_enrichments(scene_file)
+    a2c = enrichments.get("entities", {}).get("author_to_character") or {}
+    speaker_attribution = (
+        "\n".join(f"- {author} → {char}" for author, char in a2c.items())
+        or "not available"
+    )
+    prior_inconsistencies = format_inconsistencies(
+        {k: v for k, v in enrichments.items() if k != "how"}
+    )
+
     # Prefer pre-computed synthesis (stable, full-corpus view) over rolling how_context
     if lore_dir is not None:
         recent_ctx = synthesis_context_block(lore_dir, current_scene_id=scene_id)
@@ -169,10 +192,12 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
             when=f"{when.get('time_of_day')} / {when.get('duration')}",
             where_details=_format_where_details(where),
             who_details=_format_who_details(who),
+            speaker_attribution=speaker_attribution,
             which=", ".join(which.get("concepts") or []) or "none",
             what=events_summary,
             how_context=recent_ctx,
             narrative_axes=_load_narrative_axes(),
+            prior_inconsistencies=prior_inconsistencies,
             text=text,
         ),
         num_predict=1536,
@@ -190,6 +215,12 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
         ],
         "context_synthesis": str(result.get("context_synthesis") or ""),
     }
+
+    incs = [i for i in (result.get("inconsistencies") or []) if isinstance(i, dict) and i.get("description")]
+    if incs:
+        write_enrichment(scene_file, "how", {"inconsistencies": incs})
+        for inc in incs:
+            print(f"    [how] inconsistency: {inc.get('type')} — {inc.get('description')[:80]}")
 
     analysis_dir.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")

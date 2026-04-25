@@ -121,6 +121,49 @@ def run_synthesis(scenes_dir: Path, lore_dir: Path) -> Path:
     return lore_how_path
 
 
+def update_scene_entry(lore_dir: Path, scene_id: str, who: dict, what: dict, how: dict) -> None:
+    """
+    Overwrite the lore_how.yaml entry for scene_id with richer analysis results.
+    Called after step-6 analysis completes so subsequent scenes get accurate context.
+    No new LLM call — uses already-computed what/how results directly.
+    """
+    lore_how_path = lore_dir / LORE_HOW_FILE
+    lore_how   = _load_lore_how(lore_how_path)
+    scenes_data = lore_how.setdefault("scenes", {})
+
+    # Build corrected entry from analysis results
+    char_actions = []
+    for char in (who.get("details") or []):
+        name = char.get("canonical_name") or char.get("name") or ""
+        if not name:
+            continue
+        # Use emotional polarity as a short action descriptor if no better source
+        emotions = ", ".join((char.get("emotional_polarity") or {}).get("dominant_emotions") or [])
+        action = emotions or "present"
+        char_actions.append({"name": name, "action": action})
+
+    tensions = []
+    context_synth = str(how.get("context_synthesis") or "")
+    if context_synth:
+        tensions.append(context_synth)
+    for rel in (how.get("character_relations") or [])[:3]:
+        desc = rel.get("description") or ""
+        if desc:
+            tensions.append(desc[:120])
+
+    entry = {
+        "narrative":  str(what.get("summary") or scenes_data.get(scene_id, {}).get("narrative") or ""),
+        "characters": char_actions,
+        "tensions":   tensions[:4],
+        "_corrected": True,
+    }
+
+    scenes_data[scene_id] = entry
+    lore_how["scenes"] = scenes_data
+    lore_how_path.write_text(yaml.dump(lore_how, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    print(f"    [lore_how] corrected entry for {scene_id}")
+
+
 def load_lore_how(lore_dir: Path) -> dict:
     path = lore_dir / LORE_HOW_FILE
     if not path.exists():

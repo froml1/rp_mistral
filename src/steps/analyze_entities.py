@@ -15,6 +15,7 @@ from steps.manual_lore import (
     load_manual_concept, load_all_manual_concepts, merge_manual_into_concept,
 )
 from steps.synthesis import synthesis_context_block
+from steps.scene_patch import write_enrichment
 from lore_summary import update_summary, summaries_for_dir
 try:
     from store import upsert as _store_upsert
@@ -82,6 +83,17 @@ Craft/special: medicine, crafting, magic_power, magic_control, alchemy_or_scienc
 
 misc: notable traits not covered above (quirks, habits, signature items, speech patterns)
 
+── SPEAKER ATTRIBUTION ──────────────────────────────────────────────────────────
+For each Discord author, identify which character they play in this scene.
+author_to_character: {{"discord_author": "canonical_character_name"}}
+If a message looks clearly OOC (out-of-character, player talking as themselves), list its
+0-based index in ooc_messages.
+
+── INCONSISTENCIES ──────────────────────────────────────────────────────────────
+List any clear problem you notice: wrong character name used, character appears in two
+places at once, author seems to play two unrelated characters in the same scene, etc.
+inconsistencies: [{{"message_idx": int_or_null, "type": "ooc|wrong_name|split_author|character_conflict|other", "description": "..."}}]
+
 ── CONCEPTS ─────────────────────────────────────────────────────────────────────
 Named, specific elements that are neither characters nor locations nor events.
 Include: named objects of significance, factions/organizations, ideologies, laws/systems, technologies, rituals, artifacts.
@@ -108,7 +120,10 @@ JSON:
       "magic_control": null, "alchemy_or_science": null, "subterfuge": null, "performance": null}},
     "misc": []
   }}],
-  "concepts": [{{"canonical_name": "", "type": "", "appellations": [], "description": "", "related_characters": [], "significance": ""}}]
+  "concepts": [{{"canonical_name": "", "type": "", "appellations": [], "description": "", "related_characters": [], "significance": ""}}],
+  "author_to_character": {{}},
+  "ooc_messages": [],
+  "inconsistencies": []
 }}
 
 Scene:
@@ -400,5 +415,22 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
     analysis_dir.mkdir(parents=True, exist_ok=True)
     who_path.write_text(json.dumps(who_out, ensure_ascii=False, indent=2), encoding="utf-8")
     which_path.write_text(json.dumps(which_out, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # Write speaker attribution + inconsistencies back to the scene file
+    enrichment: dict = {}
+    a2c = result.get("author_to_character")
+    if isinstance(a2c, dict) and a2c:
+        enrichment["author_to_character"] = {k.lower(): v.lower() for k, v in a2c.items() if k and v}
+    ooc = [i for i in (result.get("ooc_messages") or []) if isinstance(i, int)]
+    if ooc:
+        enrichment["ooc_messages"] = ooc
+    incs = [i for i in (result.get("inconsistencies") or []) if isinstance(i, dict) and i.get("description")]
+    if incs:
+        enrichment["inconsistencies"] = incs
+        for inc in incs:
+            print(f"    [entities] inconsistency: {inc.get('type')} — {inc.get('description')[:80]}")
+    if enrichment:
+        write_enrichment(scene_file, "entities", enrichment)
+
     print(f"    entities: {len(characters)} character(s), {len(concepts)} concept(s)")
     return who_out, which_out

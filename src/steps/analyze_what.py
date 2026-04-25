@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from llm import call_llm_json
 from steps.manual_lore import load_manual_events, merge_manual_into_what
 from steps.synthesis import synthesis_context_block
+from steps.scene_patch import write_enrichment
 
 
 def _is_valid_json(path: Path) -> bool:
@@ -48,11 +49,16 @@ List ALL events without omission:
 Reference the relevant concepts/themes when they appear in events.
 For each event include which characters are involved.
 
+INCONSISTENCIES — flag any clear problem: an event involving a character not present in the scene,
+a physical impossibility, an event that contradicts prior scene context, etc.
+inconsistencies: [{{"message_idx": int_or_null, "type": "absent_character|impossible_action|event_conflict|other", "description": "..."}}]
+
 JSON: {{
   "summary": "dense narrative summary of the full scene",
   "events": [
     {{"type": "conversation|action|revelation|decision|emotional", "description": "", "characters": []}}
-  ]
+  ],
+  "inconsistencies": []
 }}
 
 Scene:
@@ -108,6 +114,12 @@ def run_what(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who:
         ],
     }
     output = merge_manual_into_what(output, load_manual_events(scene_id))
+
+    incs = [i for i in (result.get("inconsistencies") or []) if isinstance(i, dict) and i.get("description")]
+    if incs:
+        write_enrichment(scene_file, "what", {"inconsistencies": incs})
+        for inc in incs:
+            print(f"    [what] inconsistency: {inc.get('type')} — {inc.get('description')[:80]}")
 
     analysis_dir.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -13,6 +13,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from llm import call_llm_json
+from steps.scene_patch import write_enrichment
 
 LORE_DIR = Path(__file__).parent.parent.parent / "data" / "lore"
 
@@ -35,6 +36,7 @@ Extract ONLY what is clearly visible in these lines. Use null if insufficient da
 - speech_quirks: recurring expressions, verbal tics, signature phrases (list, empty if none)
 - recurring_themes_in_speech: topics or obsessions that come up in their lines (list)
 - roleplay_prompt: 2-3 sentences describing how to write in this character's voice, concretely
+- style_break: if you notice a clear break in voice/register mid-scene (e.g., sudden OOC tone, completely different vocabulary), describe it briefly, else null
 
 JSON:
 {{
@@ -45,7 +47,8 @@ JSON:
   "communication_style": "",
   "speech_quirks": [],
   "recurring_themes_in_speech": [],
-  "roleplay_prompt": ""
+  "roleplay_prompt": "",
+  "style_break": null
 }}"""
 
 _STAR_RE   = re.compile(r'\*([^*]+)\*')
@@ -154,20 +157,21 @@ def run_voice(scene_file: Path, analysis_dir: Path, who: dict) -> dict:
     messages = scene["messages"]
 
     results = {}
+    voice_inconsistencies = []
+
     for char_name in (who.get("characters") or []):
         if not char_name:
             continue
         slug = _slug(char_name)
 
         existing = _load_voice_yaml(slug)
-        # Skip if already analyzed this scene
         if scene_id in (existing.get("scenes_analyzed") or []):
             results[char_name] = existing
             continue
 
         char_lines = _extract_char_lines(messages, char_name)
         if not char_lines or len(char_lines) < 30:
-            continue  # not enough data
+            continue
 
         result = call_llm_json(
             _PROMPT.format(name=char_name, char_lines=char_lines),
@@ -175,11 +179,23 @@ def run_voice(scene_file: Path, analysis_dir: Path, who: dict) -> dict:
             num_ctx=4096,
         )
 
+        style_break = result.get("style_break")
+        if style_break:
+            voice_inconsistencies.append({
+                "message_idx": None,
+                "type": "style_break",
+                "description": f"{char_name}: {style_break}",
+            })
+            print(f"    [voice] style break for {char_name}: {str(style_break)[:80]}")
+
         merged = _merge_voice(existing, result, scene_id)
         merged["name"] = char_name
         _save_voice_yaml(slug, merged)
         results[char_name] = merged
         print(f"    voice updated: {char_name}")
+
+    if voice_inconsistencies:
+        write_enrichment(scene_file, "voice", {"inconsistencies": voice_inconsistencies})
 
     if results:
         analysis_dir.mkdir(parents=True, exist_ok=True)
