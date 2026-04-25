@@ -27,6 +27,7 @@ from llm import call_llm_json
 
 MIN_MERGE_MESSAGES = 15
 MIN_PURGE_MESSAGES = 10
+MAX_MERGE_GAP_HOURS = 24 * 10  # hard temporal guard: never merge scenes more than 10 days apart
 
 _OOC_PATTERNS = re.compile(
     r'\b(lol|lmao|mdr|xd|haha|hihi|ahah|irl|ooc|brb|afk|ok\s|okay|'
@@ -40,6 +41,7 @@ _MANIFEST = "_clean_manifest.json"
 
 _MERGE_PROMPT = """\
 Two adjacent segments from a Discord RP channel.
+Time gap between segments: {gap_str}
 
 SEGMENT A — end of previous scene:
 {seg_a}
@@ -48,8 +50,8 @@ SEGMENT B — start of next scene (may be short):
 {seg_b}
 
 Should B be merged INTO A as a continuous scene?
-Merge if: same characters on stage, same location, narrative flows directly from A into B.
-Keep separate if: different character group, location change, timeskip, clear narrative break.
+Merge if: same characters on stage, same location, narrative flows directly from A into B, gap is short.
+Keep separate if: different character group, location change, timeskip, clear narrative break, or gap > 1h.
 
 JSON: {{"merge": true}} or {{"merge": false}}"""
 
@@ -106,11 +108,36 @@ def _fmt_msgs(messages: list[dict], n: int = 15) -> str:
     return "\n".join(lines)
 
 
+def _gap_between(prev_msgs: list[dict], curr_msgs: list[dict]) -> float | None:
+    """Return gap in hours between last msg of prev and first msg of curr, or None."""
+    t_end = next(
+        (_parse_ts(m.get("timestamp", "")) for m in reversed(prev_msgs)), None
+    )
+    t_start = next(
+        (_parse_ts(m.get("timestamp", "")) for m in curr_msgs), None
+    )
+    if t_end and t_start:
+        return (t_start - t_end).total_seconds() / 3600
+    return None
+
+
 def _should_merge(prev_msgs: list[dict], curr_msgs: list[dict]) -> bool:
+    gap_h = _gap_between(prev_msgs, curr_msgs)
+
+    # Hard temporal guard — never merge scenes too far apart
+    if gap_h is not None and gap_h > MAX_MERGE_GAP_HOURS:
+        return False
+
+    if gap_h is None:
+        gap_str = "unknown"
+    elif gap_h < 1:
+        gap_str = f"{gap_h * 60:.0f}min"
+    else:
+        gap_str = f"{gap_h:.1f}h"
     seg_a = _fmt_msgs(prev_msgs[-15:])
     seg_b = _fmt_msgs(curr_msgs[:15])
     result = call_llm_json(
-        _MERGE_PROMPT.format(seg_a=seg_a, seg_b=seg_b),
+        _MERGE_PROMPT.format(seg_a=seg_a, seg_b=seg_b, gap_str=gap_str),
         num_predict=60,
     )
     return bool(result.get("merge"))
