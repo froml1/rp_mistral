@@ -180,7 +180,7 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
     )
 
     if lore_dir is not None:
-        recent_ctx = synthesis_context_block(lore_dir, current_scene_id=scene_id)
+        recent_ctx = synthesis_context_block(lore_dir, current_scene_id=scene_id, window=15, characters=who.get("characters"))
     else:
         how_ctx = _load_how_context()
         recent_ctx = "\n".join(

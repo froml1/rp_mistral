@@ -183,10 +183,11 @@ def load_lore_how(lore_dir: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
-def synthesis_context_block(lore_dir: Path, current_scene_id: str | None = None, window: int = 12) -> str:
+def synthesis_context_block(lore_dir: Path, current_scene_id: str | None = None, window: int = 12, characters: list[str] | None = None) -> str:
     """
     Format lore_how.yaml as a prompt injection block for analyze functions.
-    Injects narrative summaries of the N scenes preceding current_scene_id.
+    If characters is provided, injects the last `window` preceding scenes where
+    any of those characters appear. Otherwise falls back to the last `window` scenes.
     """
     lore_how = load_lore_how(lore_dir)
     scenes: dict = lore_how.get("scenes") or {}
@@ -200,9 +201,21 @@ def synthesis_context_block(lore_dir: Path, current_scene_id: str | None = None,
             pos = sorted_ids.index(current_scene_id)
         except ValueError:
             pos = len(sorted_ids)
-        ids_to_show = sorted_ids[max(0, pos - window): pos]
+        preceding = sorted_ids[:pos]
     else:
-        ids_to_show = sorted_ids[-window:]
+        preceding = sorted_ids
+
+    if characters:
+        chars_lower = {c.lower() for c in characters if c}
+        preceding = [
+            sid for sid in preceding
+            if any(
+                c.get("name", "").lower() in chars_lower
+                for c in (scenes[sid].get("characters") or [])
+            )
+        ]
+
+    ids_to_show = preceding[-window:]
 
     if not ids_to_show:
         return "none"
