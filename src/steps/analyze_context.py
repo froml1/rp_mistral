@@ -52,7 +52,7 @@ LOCATIONS — for each location present:
 Also: location_changes: true if the location changes during the scene.
 
 TEMPORAL — base analysis on narrative content only, NOT on timestamps:
-- summary: one sentence describing the temporal context
+- summary: one sentence describing ONLY time of day, duration and atmosphere — no character names
 - duration: estimated duration (e.g. "a few minutes", "an evening", "unknown")
 - time_of_day: morning | afternoon | evening | night | unknown
 - time_scales: list of time references in the narrative (years, seasons, past events…)

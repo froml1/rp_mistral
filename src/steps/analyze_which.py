@@ -173,7 +173,8 @@ def run_which(
     known_chars_str  = ", ".join(known_chars or []) or "none"
     known_places_str = ", ".join(known_places or []) or "none"
 
-    exclude = {n.lower() for n in (known_chars or [])} | {n.lower() for n in (known_places or [])}
+    scene_chars_lower = {n.lower() for n in (known_chars or [])}
+    exclude = scene_chars_lower | {n.lower() for n in (known_places or [])}
 
     def _call_chunk(chunk: list[dict]) -> list[dict]:
         r = call_llm_json(
@@ -218,6 +219,14 @@ def run_which(
                         if item and item.lower() not in seen:
                             ex.setdefault(lst, []).append(item)
                             seen.add(item.lower())
+
+    # Filter related_characters: only keep characters present in this scene
+    for c in concept_map.values():
+        if scene_chars_lower and c.get("related_characters"):
+            c["related_characters"] = [
+                r for r in c["related_characters"]
+                if r.lower() in scene_chars_lower
+            ]
 
     concepts = list(concept_map.values())
 
