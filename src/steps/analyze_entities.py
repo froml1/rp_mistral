@@ -61,7 +61,7 @@ _PROMPT = """\
 Analyze the CHARACTERS and CONCEPTS present in this RP scene in one pass.
 IMPORTANT: Discord authors (who write the messages) are NOT characters. Authors to ignore: {authors}
 
-SCENE SYNTHESIS (use only to resolve identity of characters who appear in the text below — do NOT add characters from here if they are absent from the scene text):
+SCENE SYNTHESIS — narrative tone and context only. This summary may be INACCURATE about which characters are present. Do NOT use it to decide who is in the scene. Only the scene text below is authoritative:
 {synthesis}
 
 CHARACTERS FROM THE IMMEDIATELY PRECEDING SCENE: {prev_scene_chars}

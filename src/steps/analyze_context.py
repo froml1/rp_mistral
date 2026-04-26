@@ -31,7 +31,7 @@ def _is_valid_json(path: Path) -> bool:
 _PROMPT = """\
 Analyze the TEMPORAL CONTEXT and LOCATIONS of this RP scene in one pass.
 
-SCENE OVERVIEW (summary of this scene — use to identify locations and timing, do not import from other scenes):
+SCENE OVERVIEW — narrative tone only. This summary may be INACCURATE about which locations are present. Do NOT use it to decide which places appear. Only the scene text below is authoritative:
 {scene_synthesis}
 
 Known locations — use these canonical names when the same place appears (do not invent new names for known places):

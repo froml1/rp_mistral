@@ -184,17 +184,15 @@ def load_lore_how(lore_dir: Path) -> dict:
 
 
 def current_scene_synthesis(lore_dir: Path, scene_id: str) -> str:
-    """Return the step-5 synthesis of the current scene as a brief context string."""
+    """Return the step-5 synthesis of the current scene as a brief context string.
+    Intentionally omits the character list — it is unreliable and causes false attribution."""
     lore_how = load_lore_how(lore_dir)
     entry = (lore_how.get("scenes") or {}).get(scene_id)
     if not entry:
         return "none"
     narrative = entry.get("narrative") or ""
-    char_parts = [c.get("name", "") for c in (entry.get("characters") or []) if c.get("name")]
     tensions = [str(t) for t in (entry.get("tensions") or [])[:2]]
     out = narrative
-    if char_parts:
-        out += f"  [characters: {', '.join(char_parts)}]"
     if tensions:
         out += f"  [tensions: {'; '.join(tensions)}]"
     return out or "none"
