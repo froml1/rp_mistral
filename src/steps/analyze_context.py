@@ -11,7 +11,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
 from steps.manual_lore import load_manual_place, load_all_manual_places, merge_manual_into_place
-from steps.synthesis import synthesis_context_block
 from steps.scene_patch import write_enrichment, chunk_messages
 from lore_summary import update_summary
 try:
@@ -31,10 +30,7 @@ def _is_valid_json(path: Path) -> bool:
 _PROMPT = """\
 Analyze the TEMPORAL CONTEXT and LOCATIONS of this RP scene in one pass.
 
-STORY SYNTHESIS (use to anchor location identity — do not confuse distinct places):
-{synthesis}
-
-Known locations (may be incomplete):
+Known locations — use these canonical names when the same place appears (do not invent new names for known places):
 {known_yaml}
 
 TEMPORAL — base analysis on narrative content only, NOT on timestamps:
@@ -212,7 +208,8 @@ def run_context(scene_file: Path, analysis_dir: Path, places_dir: Path, lore_dir
         known[name] = merge_manual_into_place(known.get(name, {}), mp) if name in known else mp
 
     known_yaml = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known.items()) or "none"
-    synthesis  = synthesis_context_block(lore_dir, current_scene_id=scene_id) if lore_dir else "none"
+    # No narrative synthesis here — prior scene stories introduce location names from other scenes
+    # and confuse the model. known_yaml already provides canonical name anchoring.
 
     chunks = chunk_messages(messages)
     if len(chunks) > 1:
@@ -222,7 +219,6 @@ def run_context(scene_file: Path, analysis_dir: Path, places_dir: Path, lore_dir
     for chunk in chunks:
         r = call_llm_json(
             _PROMPT.format(
-                synthesis=synthesis,
                 known_yaml=known_yaml,
                 prior_chunk_context=prior_chunk_context,
                 text=_scene_text(chunk),
