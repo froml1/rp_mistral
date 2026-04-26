@@ -27,22 +27,20 @@ LORE_HOW_FILE = "lore_how.yaml"
 
 _PROMPT = """\
 Read this scene from a text-based roleplay and extract the three fields below IN ORDER.
+Extract ONLY what is explicitly present in the scene text below. Do NOT import elements from other scenes.
 
 Characters speak in dialogue and perform *actions written between asterisks*.
 
-PRIOR SCENES (use to recognise recurring characters — do not invent):
-{prior_context}
-
 1. characters — every character ACTIVE in this scene (speaking or performing *actions*).
-   For each: their name as it appears in the text, and what they specifically do/say/feel here.
-   MUST NOT be empty. MUST use names from the scene text only.
+   For each: their name EXACTLY as it appears in the text, and what they specifically do/say/feel here.
+   MUST NOT be empty. MUST use names from the scene text only. Do NOT invent or import names.
 
 2. tensions — unresolved conflicts, revelations, emotional stakes, open questions at scene end.
    MUST NOT be empty if anything significant is left unresolved.
 
 3. narrative — a detailed, precise summary: dialogue topics, *physical actions*, decisions made,
    emotional atmosphere, locations mentioned. Be specific — name characters, places, objects.
-   Do NOT summarise what you already listed; instead write a full scene account.
+   Only describe what happens in THIS scene. Do NOT reference prior scenes.
 
 JSON:
 {{
@@ -107,9 +105,8 @@ def run_synthesis(scenes_dir: Path, lore_dir: Path) -> Path:
         if not messages:
             continue
 
-        prior_context = synthesis_context_block(lore_dir, current_scene_id=scene_id, window=5)
         result = call_llm_json(
-            _PROMPT.format(prior_context=prior_context, text=_scene_text(messages)),
+            _PROMPT.format(text=_scene_text(messages)),
             num_predict=2048,
             num_ctx=8192,
         )
