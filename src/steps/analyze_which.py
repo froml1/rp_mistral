@@ -28,32 +28,39 @@ def _is_valid_json(path: Path) -> bool:
 
 
 _PROMPT = """\
-Sweep the full scene text below and extract every named CONCEPT present.
+Read this roleplay scene and list every named concept that appears in it.
 
-SCENE OVERVIEW (use to understand context — do not import concepts absent from the scene text):
+SCENE OVERVIEW:
 {scene_synthesis}
 
-Concepts are named, specific elements that are STRICTLY NEITHER characters nor locations nor events.
-Include: named objects of significance, factions/organizations, ideologies/beliefs, laws/systems, technologies, rituals, named artifacts.
-Exclude: character names, location/place names, pronouns, generic items, vague references.
-Characters to exclude (already handled): {known_chars}
-Locations to exclude (already handled): {known_places}
+A concept is any named thing that is NOT a character and NOT a place:
+- factions, guilds, orders, organisations (e.g. "la guilde des ombres", "l'ordre du crépuscule")
+- named artifacts, weapons, objects of significance (e.g. "l'épée runique", "le cristal de mémoire")
+- ideologies, religions, doctrines (e.g. "le culte du vide", "la loi du sang")
+- magic systems, technologies, rituals (e.g. "la magie runique", "le rituel d'ancrage")
+- named laws, pacts, treaties (e.g. "le traité de cendres")
 
-Known concepts (use these canonical names when the same concept appears):
+Do NOT include: character names, place names, common objects (a sword, a door), pronouns.
+Characters already identified (exclude): {known_chars}
+Locations already identified (exclude): {known_places}
+
+Known concepts from previous scenes (use these canonical names if the same concept reappears):
 {known_yaml}
 
-For each qualifying concept:
+For each concept found:
 - canonical_name: specific name in lowercase
 - type: object | faction | ideology | system | artifact | other
-- appellations: all names/references used for this concept in the scene
-- description: what it is, what role it plays
-- related_characters: characters associated with it in this scene
-- significance: why it matters narratively (one sentence)
+- appellations: all names/variants used in this scene
+- description: what it is and what role it plays here
+- related_characters: characters linked to it in this scene
+- significance: why it matters (one sentence)
 - status: active | defunct | contested | legendary | unknown
-- location: where this faction/artifact is based or found (place name or "unknown")
-- allies: faction/character names allied with this concept (for factions)
-- enemies: faction/character names opposed to this concept (for factions)
+- location: where this faction/artifact is based (place name or "unknown")
+- allies: allied factions or characters (for factions)
+- enemies: opposed factions or characters (for factions)
 - access: free | earned | restricted | forbidden | unknown
+
+If no named concepts appear in this scene, return an empty list.
 
 JSON: {{"concepts": [{{"canonical_name": "", "type": "", "appellations": [], "description": "", "related_characters": [], "significance": "", "status": "unknown", "location": "unknown", "allies": [], "enemies": [], "access": "unknown"}}]}}
 
@@ -174,7 +181,7 @@ def run_which(
             text=_scene_text(messages),
         ),
         num_predict=2048,
-        num_ctx=8192,
+        num_ctx=12288,
     )
 
     # Filter: exclude names that match characters, locations, or authors

@@ -521,10 +521,15 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
 
     # — Concepts: dedicated full-scene sweep —
     from steps.analyze_which import run_which
-    known_places = [d.get("name", "") for d in (
-        json.loads((analysis_dir / "where.json").read_text(encoding="utf-8")).get("details") or []
-        if (analysis_dir / "where.json").exists() else []
-    ) if d.get("name")]
+    where_path = analysis_dir / "where.json"
+    known_places = []
+    if where_path.exists():
+        try:
+            wd = json.loads(where_path.read_text(encoding="utf-8"))
+            known_places = [d.get("canonical_name") or d.get("name", "") for d in (wd.get("details") or [])]
+            known_places = [p for p in known_places if p]
+        except Exception:
+            pass
     which_out = run_which(
         scene_file, analysis_dir, concepts_dir,
         known_chars=who_out["characters"],
