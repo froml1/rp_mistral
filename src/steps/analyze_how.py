@@ -4,8 +4,6 @@ import json
 import sys
 from pathlib import Path
 
-import yaml
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
@@ -20,7 +18,6 @@ def _is_valid_json(path: Path) -> bool:
     except Exception:
         return False
 
-_HOW_YAML = Path(__file__).parent.parent.parent / "data" / "lore" / "how_context.yaml"
 _GENERAL_HOW_YAML = Path(__file__).parent.parent.parent / "data" / "lore" / "general_how.yaml"
 
 _PROMPT = """\
@@ -91,20 +88,6 @@ def _scene_text(messages: list[dict]) -> str:
         for m in messages
     )
 
-
-def _load_how_context() -> dict:
-    if _HOW_YAML.exists():
-        with open(_HOW_YAML, encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
-    return {}
-
-
-def _save_how_context(scene_id: str, synthesis: str):
-    context = _load_how_context()
-    context[scene_id] = synthesis.lower()
-    _HOW_YAML.parent.mkdir(parents=True, exist_ok=True)
-    with open(_HOW_YAML, "w", encoding="utf-8") as f:
-        yaml.dump(context, f, allow_unicode=True, sort_keys=False)
 
 
 def _load_narrative_axes() -> str:
@@ -179,13 +162,7 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
         {k: v for k, v in enrichments.items() if k != "how"}
     )
 
-    if lore_dir is not None:
-        recent_ctx = synthesis_context_block(lore_dir, current_scene_id=scene_id, window=15, characters=who.get("characters"))
-    else:
-        how_ctx = _load_how_context()
-        recent_ctx = "\n".join(
-            f"- {sid}: {synth}" for sid, synth in list(how_ctx.items())[-5:]
-        ) or "none yet"
+    recent_ctx = synthesis_context_block(lore_dir, current_scene_id=scene_id, window=15, characters=who.get("characters")) if lore_dir else "none yet"
 
     events_summary = "; ".join(
         e.get("description", "") for e in (what.get("events") or [])[:10]
@@ -262,9 +239,6 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
 
     analysis_dir.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    if output["context_synthesis"]:
-        _save_how_context(scene_id, output["context_synthesis"])
 
     print(f"    how: {len(output['links'])} links, {len(output['character_relations'])} character relations")
     return output
