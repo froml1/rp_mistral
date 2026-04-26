@@ -37,13 +37,6 @@ SCENE OVERVIEW (summary of this scene — use to identify locations and timing, 
 Known locations — use these canonical names when the same place appears (do not invent new names for known places):
 {known_yaml}
 
-TEMPORAL — base analysis on narrative content only, NOT on timestamps:
-- summary: one sentence describing the temporal context
-- duration: estimated duration (e.g. "a few minutes", "an evening", "unknown")
-- time_of_day: morning | afternoon | evening | night | unknown
-- time_scales: list of time references in the narrative (years, seasons, past events…)
-- time_gaps: temporal gaps mentioned between fragments (e.g. "three days later")
-
 LOCATIONS — for each location present:
 - canonical_name: main name in lowercase
 - appellations: all names/references used for this place
@@ -58,6 +51,13 @@ LOCATIONS — for each location present:
 
 Also: location_changes: true if the location changes during the scene.
 
+TEMPORAL — base analysis on narrative content only, NOT on timestamps:
+- summary: one sentence describing the temporal context
+- duration: estimated duration (e.g. "a few minutes", "an evening", "unknown")
+- time_of_day: morning | afternoon | evening | night | unknown
+- time_scales: list of time references in the narrative (years, seasons, past events…)
+- time_gaps: temporal gaps mentioned between fragments (e.g. "three days later")
+
 LOCATIONS AND TEMPORAL DATA ALREADY IDENTIFIED IN EARLIER PARTS OF THIS SAME SCENE (do not duplicate):
 {prior_chunk_context}
 
@@ -67,13 +67,13 @@ inconsistencies: [{{"message_idx": int_or_null, "type": "impossible_location|tem
 
 JSON:
 {{
-  "when": {{
-    "summary": "", "duration": "", "time_of_day": "",
-    "time_scales": [], "time_gaps": []
-  }},
   "where": {{
     "locations": [{{"canonical_name": "", "appellations": [], "type": "other", "description": "", "attributes": [], "atmosphere": "", "control": "unknown", "known_inhabitants": [], "access": "unknown", "is_primary": true}}],
     "location_changes": false
+  }},
+  "when": {{
+    "summary": "", "duration": "", "time_of_day": "",
+    "time_scales": [], "time_gaps": []
   }},
   "inconsistencies": []
 }}
