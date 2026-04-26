@@ -65,7 +65,7 @@ SCENE SYNTHESIS — narrative tone and context only. This summary may be INACCUR
 {synthesis}
 
 CHARACTERS FROM THE IMMEDIATELY PRECEDING SCENE: {prev_scene_chars}
-If this scene contains only pronouns (il/elle/ils/he/she/they) with no explicit character names, AND the theme, location, and tone seem to directly continue from the previous scene, then these are likely the same characters. Only apply this if the continuity is clear.
+PRIORITY RULE: If the scene text does not explicitly name characters (only pronouns or implicit references), you MUST default to these characters rather than picking from the known characters list. Only introduce a new character if they are explicitly named in the scene text below. The known characters list is for name resolution only — not for deciding who is present.
 
 CHARACTERS AND CONCEPTS ALREADY IDENTIFIED IN EARLIER PARTS OF THIS SAME SCENE (use to resolve pronouns and references — do not duplicate):
 {prior_chunk_context}
@@ -73,7 +73,7 @@ CHARACTERS AND CONCEPTS ALREADY IDENTIFIED IN EARLIER PARTS OF THIS SAME SCENE (
 Discord authors and what they write (use this to identify which author plays which character):
 {author_hints}
 
-Known characters (from corpus sweep — for identity anchoring only, do NOT include them unless they actively appear in the scene text below):
+Known characters — use ONLY to resolve canonical names when a character IS already identified as present. Do NOT use this list to decide who is in the scene:
 {known_chars_yaml}
 
 ── CHARACTERS ──────────────────────────────────────────────────────────────────
