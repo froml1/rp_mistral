@@ -22,6 +22,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
+from steps.scene_patch import chunk_messages
 
 LORE_HOW_FILE = "lore_how.yaml"
 
@@ -61,13 +62,33 @@ Scene:
 ---"""
 
 
-def _scene_text(messages: list[dict], max_msgs: int = 30) -> str:
+def _scene_text(messages: list[dict]) -> str:
     lines = []
-    for m in list(messages)[:max_msgs]:
+    for m in messages:
         author = (m.get("author") or {}).get("name", "?") if isinstance(m.get("author"), dict) else str(m.get("author", "?"))
         content = m.get("content_en") or m.get("content", "")
         lines.append(f"[{author}]: {content}")
     return "\n".join(lines)
+
+
+def _merge_synthesis(results: list[dict]) -> dict:
+    if len(results) == 1:
+        return results[0]
+    char_map: dict[str, str] = {}
+    for r in results:
+        for c in (r.get("characters") or []):
+            if not isinstance(c, dict) or not c.get("name"):
+                continue
+            name = c["name"].lower()
+            action = c.get("action") or ""
+            if name not in char_map or len(action) > len(char_map[name]):
+                char_map[name] = action
+    characters = [{"name": name, "action": action} for name, action in char_map.items()]
+    tensions = list(dict.fromkeys(
+        str(t) for r in results for t in (r.get("tensions") or []) if t
+    ))
+    narrative = " ".join(str(r.get("narrative") or "") for r in results if r.get("narrative"))
+    return {"characters": characters, "tensions": tensions, "narrative": narrative}
 
 
 def _load_lore_how(lore_how_path: Path) -> dict:
@@ -105,11 +126,18 @@ def run_synthesis(scenes_dir: Path, lore_dir: Path) -> Path:
         if not messages:
             continue
 
-        result = call_llm_json(
-            _PROMPT.format(text=_scene_text(messages)),
-            num_predict=2048,
-            num_ctx=8192,
-        )
+        chunks = chunk_messages(messages)
+        if len(chunks) > 1:
+            print(f"    [lore_how] {scene_id}: {len(chunks)} chunks")
+        raw_results = []
+        for chunk in chunks:
+            r = call_llm_json(
+                _PROMPT.format(text=_scene_text(chunk)),
+                num_predict=2048,
+                num_ctx=8192,
+            )
+            raw_results.append(r)
+        result = _merge_synthesis(raw_results)
 
         entry = {
             "narrative":  str(result.get("narrative") or ""),
