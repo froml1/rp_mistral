@@ -27,36 +27,35 @@ from steps.scene_patch import chunk_messages
 LORE_HOW_FILE = "lore_how.yaml"
 
 _PROMPT = """\
-Read this scene from a text-based roleplay and extract the three fields below IN ORDER.
-Extract ONLY what is explicitly present in the scene text below. Do NOT import elements from other scenes.
+Read this fragment of a roleplay scene and extract the three fields below.
+Extract ONLY what is explicitly present in this fragment. Do NOT import elements from other scenes.
 
 Characters speak in dialogue and perform *actions written between asterisks*.
 
-1. characters — every character ACTIVE in this scene (speaking or performing *actions*).
-   For each: their name EXACTLY as it appears in the text, and what they specifically do/say/feel here.
-   MUST NOT be empty. MUST use names from the scene text only. Do NOT invent or import names.
+CHARACTERS ALREADY IDENTIFIED IN EARLIER PARTS OF THIS SAME SCENE (use these names if the same characters continue — do not duplicate):
+{prior_chunk_context}
 
-2. tensions — unresolved conflicts, revelations, emotional stakes, open questions at scene end.
-   MUST NOT be empty if anything significant is left unresolved.
+1. characters — every character ACTIVE in this fragment (speaking or performing *actions*).
+   Use PROPER NAMES only — never pronouns (he/she/il/elle/they) or vague references.
+   If a character was already listed above, reuse their exact name.
+   For each: their name and what they specifically do/say/feel here.
 
-3. narrative — a detailed, precise summary: dialogue topics, *physical actions*, decisions made,
-   emotional atmosphere, locations mentioned. Be specific — name characters, places, objects.
-   Only describe what happens in THIS scene. Do NOT reference prior scenes.
+2. tensions — unresolved conflicts, revelations, emotional stakes visible at the end of this fragment.
+
+3. narrative — detailed summary of this fragment: dialogue topics, *physical actions*, decisions made,
+   emotional atmosphere, locations. Name characters, places, objects. This fragment only.
 
 JSON:
 {{
   "characters": [
-    {{"name": "name as in scene", "action": "what this character does/says/feels in this scene"}},
+    {{"name": "proper name only", "action": "what this character does/says/feels"}},
     {{"name": "other name", "action": "their role"}}
   ],
-  "tensions": [
-    "first unresolved element or revelation",
-    "second stake or open question"
-  ],
-  "narrative": "Full detailed account of the scene."
+  "tensions": ["first unresolved element", "second stake"],
+  "narrative": "Detailed account of this fragment."
 }}
 
-Scene:
+Fragment:
 ---
 {text}
 ---"""
@@ -71,18 +70,27 @@ def _scene_text(messages: list[dict]) -> str:
     return "\n".join(lines)
 
 
+_PRONOUNS = {
+    "he", "she", "it", "they", "him", "her", "his", "hers", "their", "theirs",
+    "i", "me", "my", "you", "we", "us", "one", "someone", "anyone", "nobody",
+    "il", "elle", "ils", "elles", "lui", "leur", "je", "tu", "nous", "vous", "on",
+    "ce", "ceci", "cela", "ça", "celui", "celle", "ceux",
+}
+
+
 def _merge_synthesis(results: list[dict]) -> dict:
-    if len(results) == 1:
-        return results[0]
     char_map: dict[str, str] = {}
     for r in results:
         for c in (r.get("characters") or []):
             if not isinstance(c, dict) or not c.get("name"):
                 continue
-            name = c["name"].lower()
-            action = c.get("action") or ""
-            if name not in char_map or len(action) > len(char_map[name]):
-                char_map[name] = action
+            name = c["name"].strip()
+            name_low = name.lower()
+            # skip pronouns, very short tokens, or multi-word fragments that look like sentences
+            if name_low in _PRONOUNS or len(name) < 2 or " " in name and len(name) > 30:
+                continue
+            if name_low not in char_map or len(c.get("action") or "") > len(char_map[name_low]):
+                char_map[name_low] = c.get("action") or ""
     characters = [{"name": name, "action": action} for name, action in char_map.items()]
     tensions = list(dict.fromkeys(
         str(t) for r in results for t in (r.get("tensions") or []) if t
@@ -130,13 +138,17 @@ def run_synthesis(scenes_dir: Path, lore_dir: Path) -> Path:
         if len(chunks) > 1:
             print(f"    [lore_how] {scene_id}: {len(chunks)} chunks")
         raw_results = []
+        prior_chunk_context = "none"
         for chunk in chunks:
             r = call_llm_json(
-                _PROMPT.format(text=_scene_text(chunk)),
+                _PROMPT.format(prior_chunk_context=prior_chunk_context, text=_scene_text(chunk)),
                 num_predict=2048,
                 num_ctx=8192,
             )
             raw_results.append(r)
+            names = [c["name"] for c in (r.get("characters") or []) if isinstance(c, dict) and c.get("name")]
+            if names:
+                prior_chunk_context = ", ".join(names)
         result = _merge_synthesis(raw_results)
 
         entry = {
@@ -156,7 +168,7 @@ def run_synthesis(scenes_dir: Path, lore_dir: Path) -> Path:
     return lore_how_path
 
 
-def update_scene_entry(lore_dir: Path, scene_id: str, who: dict, what: dict, how: dict) -> None:
+def update_scene_entry(lore_dir: Path, scene_id: str, who: dict, what: dict, how: dict = {}) -> None:  # noqa: ARG001
     """
     Overwrite the lore_how.yaml entry for scene_id with richer analysis results.
     Called after step-6 analysis completes so subsequent scenes get accurate context.
