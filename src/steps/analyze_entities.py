@@ -10,10 +10,10 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
-from steps.manual_lore import load_manual_char, load_all_manual_chars, merge_manual_into_char
+from steps.manual_lore import load_manual_char, merge_manual_into_char
 from steps.synthesis import current_scene_synthesis
 from steps.scene_patch import write_enrichment, chunk_messages
-from lore_summary import update_summary, summaries_for_dir
+from lore_summary import update_summary
 try:
     from store import upsert as _store_upsert
 except Exception:
@@ -462,17 +462,6 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
         (m.get("author") or {}).get("name", "") if isinstance(m.get("author"), dict) else str(m.get("author", ""))
         for m in messages
     } - {""})
-
-    # Known characters with manual overrides
-    known_chars = {}
-    if chars_dir.exists():
-        for yf in chars_dir.glob("*.yaml"):
-            with open(yf, encoding="utf-8") as f:
-                d = yaml.safe_load(f) or {}
-                if d.get("name"):
-                    known_chars[d["name"]] = d
-    for name, mc in load_all_manual_chars().items():
-        known_chars[name] = merge_manual_into_char(known_chars.get(name, {}), mc) if name in known_chars else mc
 
     synthesis           = current_scene_synthesis(lore_dir, scene_id) if lore_dir else "none"
     authors_str         = ", ".join(authors)

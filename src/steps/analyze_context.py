@@ -11,7 +11,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
 from steps.manual_lore import load_manual_place, merge_manual_into_place
-from steps.synthesis import current_scene_synthesis
 from steps.scene_patch import write_enrichment, chunk_messages
 from lore_summary import update_summary
 try:
@@ -30,9 +29,7 @@ def _is_valid_json(path: Path) -> bool:
 
 _PROMPT = """\
 Analyze the TEMPORAL CONTEXT and LOCATIONS of this RP scene in one pass.
-
-SCENE OVERVIEW — narrative tone only. This summary may be INACCURATE about which locations are present. Do NOT use it to decide which places appear. Only the scene text below is authoritative:
-{scene_synthesis}
+Extract ONLY what is explicitly present in the scene text below. Do NOT infer or invent locations.
 
 LOCATIONS — for each location present:
 - canonical_name: main name in lowercase
@@ -238,8 +235,6 @@ def run_context(scene_file: Path, analysis_dir: Path, places_dir: Path, lore_dir
     scene_id = scene["scene_id"]
     messages = scene["messages"]
 
-    scene_synthesis = current_scene_synthesis(lore_dir, scene_id) if lore_dir else "none"
-
     chunks = chunk_messages(messages)
     if len(chunks) > 1:
         print(f"    context: {len(chunks)} chunks")
@@ -248,7 +243,6 @@ def run_context(scene_file: Path, analysis_dir: Path, places_dir: Path, lore_dir
     for chunk in chunks:
         r = call_llm_json(
             _PROMPT.format(
-                scene_synthesis=scene_synthesis,
                 prior_chunk_context=prior_chunk_context,
                 text=_scene_text(chunk),
             ),
