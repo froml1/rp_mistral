@@ -261,6 +261,28 @@ def _merge_char(existing: dict, extracted: dict, scene_id: str) -> dict:
     merged.setdefault("first_appearance", scene_id)
     return merged
 
+def _enrich_char_from_lore(extracted: dict, existing: dict) -> dict:
+    """Merge existing lore INTO the extracted char so downstream steps have full profile.
+    Extracted (scene-specific) data takes priority; lore fills gaps only."""
+    enriched = dict(extracted)
+    for field in ("description_physical", "description_psychological", "job", "gender", "age", "species"):
+        if not enriched.get(field) or enriched[field] in ("unknown", ""):
+            lore_val = existing.get(field) or ""
+            if lore_val and lore_val not in ("unknown", ""):
+                enriched[field] = lore_val
+    for field in ("likes", "dislikes", "beliefs", "misc", "affiliations", "wounds", "secrets", "main_locations"):
+        lore_items = existing.get(field) or []
+        scene_items = enriched.get(field) or []
+        seen = {str(x).lower() for x in scene_items}
+        enriched[field] = list(scene_items)
+        for item in lore_items:
+            if str(item).lower() not in seen:
+                enriched[field].append(item)
+                seen.add(str(item).lower())
+    if not enriched.get("goals", {}).get("short_term") and not enriched.get("goals", {}).get("long_term"):
+        if existing.get("goals"):
+            enriched["goals"] = existing["goals"]
+    return enriched
 
 
 # ── Main entry ────────────────────────────────────────────────────────────────
@@ -523,8 +545,10 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
             c["author"] = char_to_author.get(name, "")
         characters.append(c)
 
-    for char in characters:
+    for i, char in enumerate(characters):
         existing = _load_char_yaml(chars_dir, char["canonical_name"])
+        char = _enrich_char_from_lore(char, existing)
+        characters[i] = char
         merged   = _merge_char(existing, char, scene_id)
         merged   = merge_manual_into_char(merged, load_manual_char(char["canonical_name"]))
         _save_char_yaml(chars_dir, char["canonical_name"], merged)

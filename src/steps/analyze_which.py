@@ -97,6 +97,30 @@ def _save_concept_yaml(concepts_dir: Path, canonical_name: str, data: dict):
         yaml.dump(data, f, allow_unicode=True, sort_keys=False)
 
 
+def _enrich_concept_from_lore(extracted: dict, existing: dict) -> dict:
+    """Fill gaps in the freshly-extracted concept with data from existing lore. Extracted data takes priority."""
+    enriched = dict(extracted)
+    for field in ("type", "status", "location", "access"):
+        v = (enriched.get(field) or "").strip().lower()
+        if not v or v == "unknown":
+            lore_val = (existing.get(field) or "").strip().lower()
+            if lore_val and lore_val != "unknown":
+                enriched[field] = lore_val
+    for text_field in ("description", "significance"):
+        if not enriched.get(text_field) and existing.get(text_field):
+            enriched[text_field] = existing[text_field]
+    for lst_field in ("appellations", "allies", "enemies"):
+        lore_items = existing.get(lst_field) or []
+        scene_items = enriched.get(lst_field) or []
+        seen = {str(x).lower() for x in scene_items}
+        enriched[lst_field] = list(scene_items)
+        for item in lore_items:
+            if str(item).lower() not in seen:
+                enriched[lst_field].append(item)
+                seen.add(str(item).lower())
+    return enriched
+
+
 def _merge_concept(existing: dict, extracted: dict, scene_id: str) -> dict:
     merged = dict(existing)
     merged.setdefault("name", extracted.get("canonical_name", ""))
@@ -230,8 +254,10 @@ def run_which(
 
     concepts = list(concept_map.values())
 
-    for concept in concepts:
+    for i, concept in enumerate(concepts):
         existing = _load_concept_yaml(concepts_dir, concept["canonical_name"])
+        concept = _enrich_concept_from_lore(concept, existing)
+        concepts[i] = concept
         merged   = _merge_concept(existing, concept, scene_id)
         merged   = merge_manual_into_concept(merged, load_manual_concept(concept["canonical_name"]))
         _save_concept_yaml(concepts_dir, concept["canonical_name"], merged)
