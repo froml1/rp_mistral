@@ -74,9 +74,6 @@ CHARACTERS AND CONCEPTS ALREADY IDENTIFIED IN EARLIER PARTS OF THIS SAME SCENE (
 Discord authors and what they write (use this to identify which author plays which character):
 {author_hints}
 
-Known characters — use ONLY to resolve canonical names when a character IS already identified as present. Do NOT use this list to decide who is in the scene:
-{known_chars_yaml}
-
 ── CHARACTERS ──────────────────────────────────────────────────────────────────
 STRICT RULE: only extract characters who SPEAK or perform *actions* directly in the scene text below.
 Do NOT extract characters who are only mentioned, referenced, or talked about by others.
@@ -455,7 +452,6 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
     for name, mc in load_all_manual_chars().items():
         known_chars[name] = merge_manual_into_char(known_chars.get(name, {}), mc) if name in known_chars else mc
 
-    known_chars_yaml = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known_chars.items()) or "none"
     synthesis           = current_scene_synthesis(lore_dir, scene_id) if lore_dir else "none"
     authors_str         = ", ".join(authors)
     prev_chars           = _prev_scene_characters(analysis_dir)
@@ -476,7 +472,6 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
                 prev_author_to_char=prev_a2c_str,
                 prior_chunk_context=prior_chunk_context,
                 author_hints=_author_hints(chunk),
-                known_chars_yaml=known_chars_yaml,
                 text=_scene_text(chunk),
             ),
             num_predict=6144,
