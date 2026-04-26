@@ -65,7 +65,8 @@ SCENE SYNTHESIS — narrative tone and context only. This summary may be INACCUR
 {synthesis}
 
 CHARACTERS FROM THE IMMEDIATELY PRECEDING SCENE: {prev_scene_chars}
-PRIORITY RULE: If the scene text does not explicitly name characters (only pronouns or implicit references), you MUST default to these characters rather than picking from the known characters list. Only introduce a new character if they are explicitly named in the scene text below. The known characters list is for name resolution only — not for deciding who is present.
+AUTHOR → CHARACTER ATTRIBUTION FROM PRECEDING SCENE: {prev_author_to_char}
+PRIORITY RULE: If the scene text does not explicitly name characters (only pronouns or implicit references), you MUST default to these characters and this author attribution. Do NOT pull characters from the known characters list. Only introduce a new character if they are explicitly named in the scene text below.
 
 CHARACTERS AND CONCEPTS ALREADY IDENTIFIED IN EARLIER PARTS OF THIS SAME SCENE (use to resolve pronouns and references — do not duplicate):
 {prior_chunk_context}
@@ -287,6 +288,26 @@ def _prev_scene_characters(analysis_dir: Path) -> list[str]:
         return []
 
 
+def _prev_author_to_char(scene_file: Path) -> str:
+    """Return author_to_character from the immediately preceding scene's enrichments."""
+    parent = scene_file.parent
+    try:
+        siblings = sorted(p for p in parent.iterdir() if p.suffix == ".json" and not p.name.startswith("_"))
+        idx = siblings.index(scene_file)
+    except (ValueError, FileNotFoundError):
+        return "none"
+    if idx == 0:
+        return "none"
+    try:
+        data = json.loads(siblings[idx - 1].read_text(encoding="utf-8"))
+        a2c = data.get("_enrichments", {}).get("entities", {}).get("author_to_character") or {}
+        if not a2c:
+            return "none"
+        return "\n".join(f"- {author} → {char}" for author, char in a2c.items())
+    except Exception:
+        return "none"
+
+
 def _scene_text(messages: list[dict]) -> str:
     return "\n".join(
         f"[{(m.get('author') or {}).get('name', '?') if isinstance(m.get('author'), dict) else m.get('author', '?')}]: "
@@ -437,8 +458,9 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
     known_chars_yaml = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known_chars.items()) or "none"
     synthesis           = current_scene_synthesis(lore_dir, scene_id) if lore_dir else "none"
     authors_str         = ", ".join(authors)
-    prev_chars          = _prev_scene_characters(analysis_dir)
+    prev_chars           = _prev_scene_characters(analysis_dir)
     prev_scene_chars_str = ", ".join(prev_chars) if prev_chars else "none"
+    prev_a2c_str         = _prev_author_to_char(scene_file)
 
     chunks = chunk_messages(messages)
     if len(chunks) > 1:
@@ -451,6 +473,7 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
                 authors=authors_str,
                 synthesis=synthesis,
                 prev_scene_chars=prev_scene_chars_str,
+                prev_author_to_char=prev_a2c_str,
                 prior_chunk_context=prior_chunk_context,
                 author_hints=_author_hints(chunk),
                 known_chars_yaml=known_chars_yaml,
