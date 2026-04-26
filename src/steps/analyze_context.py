@@ -47,8 +47,13 @@ TEMPORAL — base analysis on narrative content only, NOT on timestamps:
 LOCATIONS — for each location present:
 - canonical_name: main name in lowercase
 - appellations: all names/references used for this place
+- type: building | wilderness | city | dungeon | dimension | vessel | other
 - description: physical description from the scene
 - attributes: list of descriptive qualities (e.g. ["dimly lit", "crowded"])
+- atmosphere: emotional tone of the place (e.g. "oppressive", "welcoming", "eerie") — one word or short phrase
+- control: who controls or owns this place — character name, faction name, or "unknown"
+- known_inhabitants: characters who live or work here regularly (not just visitors in this scene)
+- access: public | restricted | secret | dangerous | unknown
 - is_primary: true if main location of the scene
 
 Also: location_changes: true if the location changes during the scene.
@@ -67,7 +72,7 @@ JSON:
     "time_scales": [], "time_gaps": []
   }},
   "where": {{
-    "locations": [{{"canonical_name": "", "appellations": [], "description": "", "attributes": [], "is_primary": true}}],
+    "locations": [{{"canonical_name": "", "appellations": [], "type": "other", "description": "", "attributes": [], "atmosphere": "", "control": "unknown", "known_inhabitants": [], "access": "unknown", "is_primary": true}}],
     "location_changes": false
   }},
   "inconsistencies": []
@@ -111,7 +116,10 @@ def _merge_place(existing: dict, extracted: dict, scene_id: str) -> dict:
     merged.setdefault("appellations", [])
     merged.setdefault("description", "")
     merged.setdefault("attributes", [])
+    merged.setdefault("known_inhabitants", [])
     merged.setdefault("appearances", [])
+    for field in ("type", "atmosphere", "control", "access"):
+        merged.setdefault(field, "")
 
     for app in (extracted.get("appellations") or []):
         if app.lower() not in [a.lower() for a in merged["appellations"]]:
@@ -124,6 +132,15 @@ def _merge_place(existing: dict, extracted: dict, scene_id: str) -> dict:
     for attr in (extracted.get("attributes") or []):
         if attr.lower() not in [a.lower() for a in merged["attributes"]]:
             merged["attributes"].append(attr.lower())
+
+    for inh in (extracted.get("known_inhabitants") or []):
+        if inh.lower() not in [i.lower() for i in merged["known_inhabitants"]]:
+            merged["known_inhabitants"].append(inh.lower())
+
+    for field in ("type", "atmosphere", "control", "access"):
+        new_val = (extracted.get(field) or "").strip().lower()
+        if new_val and new_val not in ("unknown", "other", ""):
+            merged[field] = new_val
 
     if scene_id not in merged["appearances"]:
         merged["appearances"].append(scene_id)
@@ -156,16 +173,17 @@ def _merge_context(results: list[dict]) -> dict:
                 loc_map[name] = dict(loc)
             else:
                 ex = loc_map[name]
-                seen_apps  = {a.lower() for a in (ex.get("appellations") or [])}
-                seen_attrs = {a.lower() for a in (ex.get("attributes")   or [])}
-                for a in (loc.get("appellations") or []):
-                    if a.lower() not in seen_apps:
-                        ex.setdefault("appellations", []).append(a.lower()); seen_apps.add(a.lower())
-                for a in (loc.get("attributes") or []):
-                    if a.lower() not in seen_attrs:
-                        ex.setdefault("attributes", []).append(a.lower()); seen_attrs.add(a.lower())
+                for list_field, key in (("appellations", None), ("attributes", None), ("known_inhabitants", None)):
+                    seen = {a.lower() for a in (ex.get(list_field) or [])}
+                    for a in (loc.get(list_field) or []):
+                        if a.lower() not in seen:
+                            ex.setdefault(list_field, []).append(a.lower()); seen.add(a.lower())
                 if len(loc.get("description", "")) > len(ex.get("description", "")):
                     ex["description"] = loc["description"]
+                for field in ("type", "atmosphere", "control", "access"):
+                    v = (loc.get(field) or "").strip().lower()
+                    if v and v not in ("unknown", "other", "") and not ex.get(field):
+                        ex[field] = v
 
     incs = [i for r in results for i in (r.get("inconsistencies") or []) if isinstance(i, dict)]
     return {

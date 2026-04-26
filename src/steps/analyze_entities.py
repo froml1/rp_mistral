@@ -82,8 +82,12 @@ Known concepts (may be incomplete):
 ── CHARACTERS ──────────────────────────────────────────────────────────────────
 For each character (not author) active in this scene:
 
-Identity: canonical_name (lowercase full name), author (Discord username who plays this character — from the hints above), appellations (all references), description_physical, job, main_locations
+Identity: canonical_name (lowercase full name), author (Discord username who plays this character — from the hints above), gender (male|female|non-binary|unknown), age (e.g. "young adult", "elderly", "immortal", "unknown"), species (e.g. "human", "elf", "demon", "unknown"), appellations (all references), description_physical, job, main_locations
+affiliations: factions, guilds, orders the character belongs to (list of names)
 relations: list of relationships as [{{"character": "name", "relation": "type"}}] (e.g. frère, allié, ennemi)
+goals: {{"short_term": ["visible objective in this scene"], "long_term": ["deeper ambition if mentioned"]}}
+wounds: past traumas or injuries explicitly mentioned or strongly implied (list of short descriptions)
+secrets: information the character conceals — detectable by contradiction between words and actions (list)
 Psychology: description_psychological, likes (list), dislikes (list), beliefs (list)
 Emotional polarity: dominant_emotions (1-3 emotions), emotional_range (narrow|moderate|wide), emotional_triggers (list)
 
@@ -116,14 +120,24 @@ Include: named objects of significance, factions/organizations, ideologies, laws
 Exclude: character names, location/place names, pronouns (he/she/they/it/…), generic items, vague references.
 If unsure whether something is a concept or a character/place, omit it.
 
-For each concept: canonical_name, type (object|faction|ideology|system|artifact|other),
-appellations, description, related_characters, significance (one sentence).
+For each concept:
+- canonical_name, type (object|faction|ideology|system|artifact|other)
+- appellations, description, related_characters, significance (one sentence)
+- status: active | defunct | contested | legendary | unknown
+- location: where this faction/artifact is based or found (place name or "unknown")
+- allies: list of faction/character names allied with this concept (for factions)
+- enemies: list of faction/character names opposed to this concept (for factions)
+- access: how characters can obtain/join/use this — free | earned | restricted | forbidden | unknown
 
 JSON:
 {{
   "characters": [{{
-    "canonical_name": "", "appellations": [], "description_physical": "", "job": "",
-    "main_locations": [], "relations": [{{"character": "", "relation": ""}}], "description_psychological": "", "likes": [], "dislikes": [],
+    "canonical_name": "", "author": "", "gender": "unknown", "age": "unknown", "species": "unknown",
+    "appellations": [], "description_physical": "", "job": "", "main_locations": [],
+    "affiliations": [], "relations": [{{"character": "", "relation": ""}}],
+    "goals": {{"short_term": [], "long_term": []}},
+    "wounds": [], "secrets": [],
+    "description_psychological": "", "likes": [], "dislikes": [],
     "beliefs": [],
     "emotional_polarity": {{"dominant_emotions": [], "emotional_range": "moderate", "emotional_triggers": []}},
     "personality_axes": {{"calm_vs_impulsive": 0, "introvert_vs_extrovert": 0, "cautious_vs_reckless": 0,
@@ -137,7 +151,7 @@ JSON:
       "magic_control": null, "alchemy_or_science": null, "subterfuge": null, "performance": null}},
     "misc": []
   }}],
-  "concepts": [{{"canonical_name": "", "type": "", "appellations": [], "description": "", "related_characters": [], "significance": ""}}],
+  "concepts": [{{"canonical_name": "", "type": "", "appellations": [], "description": "", "related_characters": [], "significance": "", "status": "unknown", "location": "unknown", "allies": [], "enemies": [], "access": "unknown"}}],
   "author_to_character": {{}},
   "ooc_messages": [],
   "inconsistencies": []
@@ -226,10 +240,12 @@ def _merge_emotional_polarity(existing: dict, new_ep: dict) -> dict:
 def _merge_char(existing: dict, extracted: dict, scene_id: str) -> dict:
     merged = dict(existing)
     merged.setdefault("name", extracted.get("canonical_name", ""))
-    for field in ("appellations", "beliefs", "likes", "dislikes", "main_locations", "misc", "appearances"):
+    for field in ("appellations", "beliefs", "likes", "dislikes", "main_locations", "misc", "appearances",
+                  "affiliations", "wounds", "secrets"):
         merged.setdefault(field, [])
     merged.setdefault("relations", [])
-    for field in ("description_physical", "description_psychological", "job", "author"):
+    merged.setdefault("goals", {"short_term": [], "long_term": []})
+    for field in ("description_physical", "description_psychological", "job", "author", "gender", "age", "species"):
         merged.setdefault(field, "")
     merged.setdefault("emotional_polarity", {})
     merged.setdefault("personality_axes", {})
@@ -240,8 +256,16 @@ def _merge_char(existing: dict, extracted: dict, scene_id: str) -> dict:
         new_val = (extracted.get(field) or "").strip().lower()
         if new_val and len(new_val) > len(merged.get(field) or ""):
             merged[field] = new_val
-    for field in ("beliefs", "likes", "dislikes", "main_locations", "misc"):
+    for single_field in ("gender", "age", "species"):
+        new_val = (extracted.get(single_field) or "").strip().lower()
+        if new_val and new_val != "unknown":
+            merged[single_field] = new_val
+    for field in ("beliefs", "likes", "dislikes", "main_locations", "misc", "affiliations", "wounds", "secrets"):
         _merge_list(merged[field], extracted.get(field) or [])
+    # Merge goals
+    new_goals = extracted.get("goals") or {}
+    _merge_list(merged["goals"].setdefault("short_term", []), new_goals.get("short_term") or [])
+    _merge_list(merged["goals"].setdefault("long_term", []),  new_goals.get("long_term")  or [])
     merged["relations"] = _merge_relations(merged.get("relations") or [], extracted.get("relations") or [])
 
     merged["emotional_polarity"] = _merge_emotional_polarity(merged["emotional_polarity"], extracted.get("emotional_polarity") or {})
@@ -275,11 +299,12 @@ def _merge_concept(existing: dict, extracted: dict, scene_id: str) -> dict:
     merged = dict(existing)
     merged.setdefault("name", extracted.get("canonical_name", ""))
     merged.setdefault("type", extracted.get("type", "other"))
-    merged.setdefault("appellations", [])
+    for lst in ("appellations", "related_characters", "allies", "enemies", "appearances"):
+        merged.setdefault(lst, [])
     merged.setdefault("description", "")
     merged.setdefault("significance", "")
-    merged.setdefault("related_characters", [])
-    merged.setdefault("appearances", [])
+    for field in ("status", "location", "access"):
+        merged.setdefault(field, "")
 
     for app in (extracted.get("appellations") or []):
         if app.lower() not in [a.lower() for a in merged["appellations"]]:
@@ -290,9 +315,15 @@ def _merge_concept(existing: dict, extracted: dict, scene_id: str) -> dict:
         if new_val and len(new_val) > len(merged[field]):
             merged[field] = new_val.lower()
 
-    for char in (extracted.get("related_characters") or []):
-        if char.lower() not in [c.lower() for c in merged["related_characters"]]:
-            merged["related_characters"].append(char.lower())
+    for lst in ("related_characters", "allies", "enemies"):
+        for item in (extracted.get(lst) or []):
+            if item.lower() not in [x.lower() for x in merged[lst]]:
+                merged[lst].append(item.lower())
+
+    for field in ("status", "location", "access"):
+        new_val = (extracted.get(field) or "").strip().lower()
+        if new_val and new_val != "unknown":
+            merged[field] = new_val
 
     if scene_id not in merged["appearances"]:
         merged["appearances"].append(scene_id)
@@ -352,13 +383,27 @@ def _merge_entities(results: list[dict]) -> dict:
                     v = (c.get(field) or "").strip()
                     if v and len(v) > len(ex.get(field) or ""):
                         ex[field] = v
-                for field in ("appellations", "likes", "dislikes", "beliefs", "main_locations", "misc"):
+                for field in ("appellations", "likes", "dislikes", "beliefs", "main_locations", "misc",
+                              "affiliations", "wounds", "secrets"):
                     existing_low = {x.lower() for x in (ex.get(field) or [])}
                     for item in (c.get(field) or []):
                         if item and item.lower() not in existing_low:
                             ex.setdefault(field, []).append(item)
                             existing_low.add(item.lower())
                 ex["relations"] = _merge_relations(ex.get("relations") or [], c.get("relations") or [])
+                # Merge goals
+                new_goals = c.get("goals") or {}
+                for sub in ("short_term", "long_term"):
+                    ex_sub = ex.setdefault("goals", {}).setdefault(sub, [])
+                    ex_low = {x.lower() for x in ex_sub}
+                    for item in (new_goals.get(sub) or []):
+                        if item and item.lower() not in ex_low:
+                            ex_sub.append(item); ex_low.add(item.lower())
+                # Single-value fields: take non-unknown value
+                for sf in ("gender", "age", "species"):
+                    v = (c.get(sf) or "").strip().lower()
+                    if v and v != "unknown" and not ex.get(sf):
+                        ex[sf] = v
 
     # Merge concepts by canonical_name
     concept_map: dict[str, dict] = {}
@@ -482,6 +527,10 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
 
     # — Characters —
     authors_lower = {a.lower() for a in authors}
+    # Reverse author_to_character for back-fill: char_name_lower → discord_author
+    a2c_raw = result.get("author_to_character") or {}
+    char_to_author = {v.lower(): k for k, v in a2c_raw.items() if k and v}
+
     characters = []
     for c in (result.get("characters") or []):
         if not isinstance(c, dict) or not c.get("canonical_name"):
@@ -496,6 +545,9 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
                 a for a in (c["appellations"] or [])
                 if a and a.lower().strip() not in _PRONOUNS and a.lower().strip() not in authors_lower
             ]
+        # Back-fill author from author_to_character if not already set
+        if not c.get("author"):
+            c["author"] = char_to_author.get(name, "")
         characters.append(c)
 
     for char in characters:
