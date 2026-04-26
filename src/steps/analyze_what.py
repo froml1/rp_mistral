@@ -132,7 +132,7 @@ def run_what(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who:
     }
     output = merge_manual_into_what(output, load_manual_events(scene_id))
 
-    incs = [i for i in (result.get("inconsistencies") or []) if isinstance(i, dict) and i.get("description")]
+    incs = [i for r in raw_results for i in (r.get("inconsistencies") or []) if isinstance(i, dict) and i.get("description")]
     if incs:
         write_enrichment(scene_file, "what", {"inconsistencies": incs})
         for inc in incs:

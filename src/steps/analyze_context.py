@@ -150,7 +150,7 @@ def _merge_context(results: list[dict]) -> dict:
     for w in wheres:
         for loc in (w.get("locations") or []):
             name = (loc.get("canonical_name") or "").lower()
-            if not name:
+            if not name or name.startswith("unknown"):
                 continue
             if name not in loc_map:
                 loc_map[name] = dict(loc)
@@ -251,7 +251,11 @@ def run_context(scene_file: Path, analysis_dir: Path, places_dir: Path, lore_dir
 
     # — Where —
     raw_where = result.get("where") or {}
-    locations = [l for l in (raw_where.get("locations") or []) if isinstance(l, dict) and l.get("canonical_name")]
+    locations = [
+        l for l in (raw_where.get("locations") or [])
+        if isinstance(l, dict) and l.get("canonical_name")
+        and not (l["canonical_name"] or "").lower().strip().startswith("unknown")
+    ]
 
     for loc in locations:
         existing = _load_place_yaml(places_dir, loc["canonical_name"])

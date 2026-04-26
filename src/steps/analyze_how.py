@@ -254,7 +254,7 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
         "context_synthesis":   " ".join(synthesis_parts),
     }
 
-    incs = [i for i in (result.get("inconsistencies") or []) if isinstance(i, dict) and i.get("description")]
+    incs = [i for r in raw_results for i in (r.get("inconsistencies") or []) if isinstance(i, dict) and i.get("description")]
     if incs:
         write_enrichment(scene_file, "how", {"inconsistencies": incs})
         for inc in incs:

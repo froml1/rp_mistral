@@ -22,6 +22,20 @@ try:
 except Exception:
     def _store_upsert(*a, **kw): pass  # store optional at analysis time
 
+_PRONOUNS = {
+    # English
+    "he", "she", "it", "they", "him", "her", "his", "hers", "their", "theirs",
+    "i", "me", "my", "mine", "you", "your", "yours", "we", "us", "our", "ours",
+    "this", "that", "these", "those", "who", "whom", "whose", "one", "someone",
+    "anyone", "everyone", "nobody", "somebody", "the", "a", "an",
+    # French
+    "il", "elle", "ils", "elles", "lui", "leur", "leurs",
+    "je", "me", "moi", "tu", "te", "toi", "nous", "vous", "on", "se", "soi",
+    "ce", "ceci", "cela", "ça", "qui", "que", "quoi", "dont", "où",
+    "celui", "celle", "ceux", "celles", "lequel", "laquelle", "lesquels", "lesquelles",
+    "le", "la", "les", "un", "une", "des", "du",
+}
+
 _PERSONALITY_AXES = [
     "calm_vs_impulsive", "introvert_vs_extrovert", "cautious_vs_reckless",
     "loyal_vs_treacherous", "compassionate_vs_cold", "honest_vs_deceptive",
@@ -97,9 +111,10 @@ places at once, author seems to play two unrelated characters in the same scene,
 inconsistencies: [{{"message_idx": int_or_null, "type": "ooc|wrong_name|split_author|character_conflict|other", "description": "..."}}]
 
 ── CONCEPTS ─────────────────────────────────────────────────────────────────────
-Named, specific elements that are neither characters nor locations nor events.
+Named, specific elements that are STRICTLY NEITHER characters, locations, nor events.
 Include: named objects of significance, factions/organizations, ideologies, laws/systems, technologies, rituals, artifacts.
-Exclude: generic items, pronouns, vague references, purely incidental elements.
+Exclude: character names, location/place names, pronouns (he/she/they/it/…), generic items, vague references.
+If unsure whether something is a concept or a character/place, omit it.
 
 For each concept: canonical_name, type (object|faction|ideology|system|artifact|other),
 appellations, description, related_characters, significance (one sentence).
@@ -475,6 +490,12 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
         if name in authors_lower:
             print(f"    [skip] '{c['canonical_name']}' is a Discord author, not a character")
             continue
+        # Filter appellations: remove pronouns and author names
+        if "appellations" in c:
+            c["appellations"] = [
+                a for a in (c["appellations"] or [])
+                if a and a.lower().strip() not in _PRONOUNS and a.lower().strip() not in authors_lower
+            ]
         characters.append(c)
 
     for char in characters:
@@ -489,7 +510,31 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
     who_out = {"characters": [c.get("canonical_name") for c in characters], "details": characters}
 
     # — Concepts —
-    concepts = [c for c in (result.get("concepts") or []) if isinstance(c, dict) and c.get("canonical_name")]
+    char_names_lower = {c["canonical_name"].lower() for c in characters if c.get("canonical_name")}
+    # Also load known location names to cross-check
+    known_place_names: set[str] = set()
+    places_dir_candidate = chars_dir.parent / "places"
+    if places_dir_candidate.exists():
+        for yf in places_dir_candidate.glob("*.yaml"):
+            with open(yf, encoding="utf-8") as f:
+                d = yaml.safe_load(f) or {}
+                if d.get("name"):
+                    known_place_names.add(d["name"].lower())
+
+    concepts = []
+    for c in (result.get("concepts") or []):
+        if not isinstance(c, dict) or not c.get("canonical_name"):
+            continue
+        cname = c["canonical_name"].lower().strip()
+        if not cname or cname.startswith("unknown"):
+            continue
+        if cname in char_names_lower or cname in authors_lower:
+            print(f"    [skip concept] '{c['canonical_name']}' is a character/author name")
+            continue
+        if cname in known_place_names:
+            print(f"    [skip concept] '{c['canonical_name']}' is a known location")
+            continue
+        concepts.append(c)
     for concept in concepts:
         existing = _load_concept_yaml(concepts_dir, concept["canonical_name"])
         merged   = _merge_concept(existing, concept, scene_id)
