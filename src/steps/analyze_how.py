@@ -57,11 +57,11 @@ Produce FOUR things:
    - description: how and why this link exists
    - characters_involved: list of characters
 
-2. CHARACTER RELATIONS — explicit relationships and sentiments between characters in this scene:
-   - from_char / to_char: character names
+2. CHARACTER RELATIONS — ONLY between characters who directly interact in this scene (speak to each other, react to each other, act on each other). Do NOT infer relations from prior context or between characters who are not both active here:
+   - from_char / to_char: character names (both must be present and active in this scene)
    - relation_type: ally / enemy / rival / friend / mentor / subordinate / stranger / family / romantic / neutral
    - sentiment: the emotional tone (trust / distrust / fear / admiration / resentment / love / indifference / etc.)
-   - description: what in the scene reveals this relation/sentiment
+   - description: the specific moment in this scene that reveals this relation/sentiment
 
 3. CONTEXT SYNTHESIS — how this scene connects to the broader narrative based on accumulated context.
 
@@ -212,14 +212,19 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
             if key not in seen_links:
                 merged_links.append(l); seen_links.add(key)
 
-    # Merge character_relations (deduplicate by from+to+type)
+    # Merge character_relations (deduplicate by from+to+type, filter to present characters)
+    present_chars = {c.lower() for c in (who.get("characters") or []) if c}
     seen_rels: set[tuple] = set()
     merged_rels = []
     for r in raw_results:
         for rel in (r.get("character_relations") or []):
             if not isinstance(rel, dict) or not rel.get("from_char") or not rel.get("to_char"):
                 continue
-            key = (rel.get("from_char", "").lower(), rel.get("to_char", "").lower(), rel.get("relation_type", "").lower())
+            fc = rel["from_char"].lower()
+            tc = rel["to_char"].lower()
+            if present_chars and (fc not in present_chars or tc not in present_chars):
+                continue
+            key = (fc, tc, rel.get("relation_type", "").lower())
             if key not in seen_rels:
                 merged_rels.append(rel); seen_rels.add(key)
 

@@ -64,8 +64,11 @@ _PROMPT = """\
 Analyze the CHARACTERS and CONCEPTS present in this RP scene in one pass.
 IMPORTANT: Discord authors (who write the messages) are NOT characters. Authors to ignore: {authors}
 
-STORY SYNTHESIS (use to anchor character identity — do not merge distinct characters):
+SCENE SYNTHESIS (use only to resolve identity of characters who appear in the text below — do NOT add characters from here if they are absent from the scene text):
 {synthesis}
+
+CHARACTERS FROM THE IMMEDIATELY PRECEDING SCENE: {prev_scene_chars}
+If this scene contains only pronouns (il/elle/ils/he/she/they) with no explicit character names, AND the theme, location, and tone seem to directly continue from the previous scene, then these are likely the same characters. Only apply this if the continuity is clear.
 
 CHARACTERS AND CONCEPTS ALREADY IDENTIFIED IN EARLIER PARTS OF THIS SAME SCENE (use to resolve pronouns and references — do not duplicate):
 {prior_chunk_context}
@@ -73,14 +76,16 @@ CHARACTERS AND CONCEPTS ALREADY IDENTIFIED IN EARLIER PARTS OF THIS SAME SCENE (
 Discord authors and what they write (use this to identify which author plays which character):
 {author_hints}
 
-Known characters (from corpus sweep):
+Known characters (from corpus sweep — for identity anchoring only, do NOT include them unless they actively appear in the scene text below):
 {known_chars_yaml}
 
 Known concepts (may be incomplete):
 {known_concepts_yaml}
 
 ── CHARACTERS ──────────────────────────────────────────────────────────────────
-For each character (not author) active in this scene:
+STRICT RULE: only extract characters who SPEAK or perform *actions* directly in the scene text below.
+Do NOT extract characters who are only mentioned, referenced, or talked about by others.
+For each character PHYSICALLY PRESENT AND ACTIVE in this scene:
 
 Identity: canonical_name (lowercase full name), author (Discord username who plays this character — from the hints above), gender (male|female|non-binary|unknown), age (e.g. "young adult", "elderly", "immortal", "unknown"), species (e.g. "human", "elf", "demon", "unknown"), appellations (all references), description_physical, job, main_locations
 affiliations: factions, guilds, orders the character belongs to (list of names)
@@ -185,11 +190,14 @@ def _save_char_yaml(chars_dir: Path, name: str, data: dict):
 
 
 def _merge_list(existing: list, new_items: list) -> list:
-    low = [x.lower() for x in existing]
+    low = [str(x).lower() for x in existing]
     for item in (new_items or []):
-        if item and item.lower() not in low:
-            existing.append(item.lower())
-            low.append(item.lower())
+        if not item:
+            continue
+        item_s = str(item)
+        if item_s.lower() not in low:
+            existing.append(item_s.lower())
+            low.append(item_s.lower())
     return existing
 
 
@@ -333,6 +341,26 @@ def _merge_concept(existing: dict, extracted: dict, scene_id: str) -> dict:
 
 # ── Main entry ────────────────────────────────────────────────────────────────
 
+def _prev_scene_characters(analysis_dir: Path) -> list[str]:
+    """Return character names from the immediately preceding scene's who.json."""
+    parent = analysis_dir.parent
+    try:
+        siblings = sorted(d for d in parent.iterdir() if d.is_dir())
+        idx = siblings.index(analysis_dir)
+    except (ValueError, FileNotFoundError):
+        return []
+    if idx == 0:
+        return []
+    prev_who = siblings[idx - 1] / "who.json"
+    if not prev_who.exists():
+        return []
+    try:
+        data = json.loads(prev_who.read_text(encoding="utf-8"))
+        return [c for c in (data.get("characters") or []) if c]
+    except Exception:
+        return []
+
+
 def _scene_text(messages: list[dict]) -> str:
     return "\n".join(
         f"[{(m.get('author') or {}).get('name', '?') if isinstance(m.get('author'), dict) else m.get('author', '?')}]: "
@@ -385,11 +413,14 @@ def _merge_entities(results: list[dict]) -> dict:
                         ex[field] = v
                 for field in ("appellations", "likes", "dislikes", "beliefs", "main_locations", "misc",
                               "affiliations", "wounds", "secrets"):
-                    existing_low = {x.lower() for x in (ex.get(field) or [])}
+                    existing_low = {str(x).lower() for x in (ex.get(field) or [])}
                     for item in (c.get(field) or []):
-                        if item and item.lower() not in existing_low:
-                            ex.setdefault(field, []).append(item)
-                            existing_low.add(item.lower())
+                        if not item:
+                            continue
+                        item_s = str(item)
+                        if item_s.lower() not in existing_low:
+                            ex.setdefault(field, []).append(item_s)
+                            existing_low.add(item_s.lower())
                 ex["relations"] = _merge_relations(ex.get("relations") or [], c.get("relations") or [])
                 # Merge goals
                 new_goals = c.get("goals") or {}
@@ -492,6 +523,8 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
     known_concepts_yaml = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known_concepts.items()) or "none"
     synthesis           = current_scene_synthesis(lore_dir, scene_id) if lore_dir else "none"
     authors_str         = ", ".join(authors)
+    prev_chars          = _prev_scene_characters(analysis_dir)
+    prev_scene_chars_str = ", ".join(prev_chars) if prev_chars else "none"
 
     chunks = chunk_messages(messages)
     if len(chunks) > 1:
@@ -503,6 +536,7 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
             _PROMPT.format(
                 authors=authors_str,
                 synthesis=synthesis,
+                prev_scene_chars=prev_scene_chars_str,
                 prior_chunk_context=prior_chunk_context,
                 author_hints=_author_hints(chunk),
                 known_chars_yaml=known_chars_yaml,
@@ -529,7 +563,9 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
     authors_lower = {a.lower() for a in authors}
     # Reverse author_to_character for back-fill: char_name_lower → discord_author
     a2c_raw = result.get("author_to_character") or {}
-    char_to_author = {v.lower(): k for k, v in a2c_raw.items() if k and v}
+    # Keep only attributions where the discord author actually wrote in this scene
+    a2c_raw = {k: v for k, v in a2c_raw.items() if k and v and k.lower() in authors_lower}
+    char_to_author = {v.lower(): k for k, v in a2c_raw.items()}
 
     characters = []
     for c in (result.get("characters") or []):
@@ -538,6 +574,12 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
         name = c["canonical_name"].lower().strip()
         if name in authors_lower:
             print(f"    [skip] '{c['canonical_name']}' is a Discord author, not a character")
+            continue
+        # Reject characters with no author attribution AND no known presence in the scene
+        # (author field set means the LLM saw them active; back-fill covers the rest)
+        assigned_author = (c.get("author") or "").lower()
+        if assigned_author and assigned_author not in authors_lower:
+            print(f"    [skip] '{c['canonical_name']}' attributed to absent author '{assigned_author}'")
             continue
         # Filter appellations: remove pronouns and author names
         if "appellations" in c:
