@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from llm import call_llm_json
 from steps.manual_lore import load_manual_concept, load_all_manual_concepts, merge_manual_into_concept
 from steps.synthesis import current_scene_synthesis
+from steps.scene_patch import chunk_messages
 from lore_summary import update_summary
 try:
     from store import upsert as _store_upsert
@@ -172,31 +173,53 @@ def run_which(
     known_chars_str  = ", ".join(known_chars or []) or "none"
     known_places_str = ", ".join(known_places or []) or "none"
 
-    result = call_llm_json(
-        _PROMPT.format(
-            scene_synthesis=scene_synthesis,
-            known_chars=known_chars_str,
-            known_places=known_places_str,
-            known_yaml=known_yaml,
-            text=_scene_text(messages),
-        ),
-        num_predict=2048,
-        num_ctx=12288,
-    )
-
-    # Filter: exclude names that match characters, locations, or authors
     exclude = {n.lower() for n in (known_chars or [])} | {n.lower() for n in (known_places or [])}
-    concepts = []
-    for c in (result.get("concepts") or []):
-        if not isinstance(c, dict) or not c.get("canonical_name"):
-            continue
-        cname = c["canonical_name"].lower().strip()
-        if not cname or cname.startswith("unknown"):
-            continue
-        if cname in exclude:
-            print(f"    [skip concept] '{c['canonical_name']}' matches a character or location")
-            continue
-        concepts.append(c)
+
+    def _call_chunk(chunk: list[dict]) -> list[dict]:
+        r = call_llm_json(
+            _PROMPT.format(
+                scene_synthesis=scene_synthesis,
+                known_chars=known_chars_str,
+                known_places=known_places_str,
+                known_yaml=known_yaml,
+                text=_scene_text(chunk),
+            ),
+            num_predict=2048,
+            num_ctx=12288,
+        )
+        return r.get("concepts") or []
+
+    chunks = chunk_messages(messages)
+    if len(chunks) > 1:
+        print(f"    which: {len(chunks)} chunks")
+
+    # Collect all concepts across chunks, deduplicate by canonical_name
+    concept_map: dict[str, dict] = {}
+    for chunk in chunks:
+        for c in _call_chunk(chunk):
+            if not isinstance(c, dict) or not c.get("canonical_name"):
+                continue
+            cname = c["canonical_name"].lower().strip()
+            if not cname or cname.startswith("unknown"):
+                continue
+            if cname in exclude:
+                continue
+            if cname not in concept_map:
+                concept_map[cname] = c
+            else:
+                # Merge: take longer description/significance, union lists
+                ex = concept_map[cname]
+                for field in ("description", "significance"):
+                    if len(c.get(field, "")) > len(ex.get(field, "")):
+                        ex[field] = c[field]
+                for lst in ("appellations", "related_characters", "allies", "enemies"):
+                    seen = {x.lower() for x in (ex.get(lst) or [])}
+                    for item in (c.get(lst) or []):
+                        if item and item.lower() not in seen:
+                            ex.setdefault(lst, []).append(item)
+                            seen.add(item.lower())
+
+    concepts = list(concept_map.values())
 
     for concept in concepts:
         existing = _load_concept_yaml(concepts_dir, concept["canonical_name"])

@@ -85,7 +85,7 @@ def _extract_char_lines(messages: list[dict], char_name: str) -> str:
         if plain and any(part in plain.lower() for part in name_parts if len(part) > 2):
             lines.append(plain[:200])
 
-    return "\n".join(lines[:60])  # cap to avoid prompt overflow
+    return lines  # caller handles chunking
 
 
 def _load_voice_yaml(slug: str) -> dict:
@@ -168,15 +168,39 @@ def run_voice(scene_file: Path, analysis_dir: Path, who: dict) -> dict:
             results[char_name] = existing
             continue
 
-        char_lines = _extract_char_lines(messages, char_name)
-        if not char_lines or len(char_lines) < 30:
+        all_lines = _extract_char_lines(messages, char_name)
+        if not all_lines or len("\n".join(all_lines)) < 30:
             continue
 
-        result = call_llm_json(
-            _PROMPT.format(name=char_name, char_lines=char_lines),
-            num_predict=1024,
-            num_ctx=4096,
-        )
+        # Chunk lines to avoid context overflow
+        VOICE_CHUNK = 40
+        line_chunks = [all_lines[i:i + VOICE_CHUNK] for i in range(0, len(all_lines), VOICE_CHUNK)] or [all_lines]
+
+        raw_results = []
+        for lc in line_chunks:
+            r = call_llm_json(
+                _PROMPT.format(name=char_name, char_lines="\n".join(lc)),
+                num_predict=1024,
+                num_ctx=6144,
+            )
+            raw_results.append(r)
+
+        # Merge: take most verbose scalars, union lists
+        result = raw_results[0]
+        for r in raw_results[1:]:
+            for field in ("avg_sentence_length", "formality_level", "vocabulary_register",
+                          "communication_style", "dialogue_vs_action_ratio"):
+                if r.get(field) is not None and r.get(field) != "":
+                    result[field] = r[field]
+            for lst in ("speech_quirks", "recurring_themes_in_speech"):
+                seen = {x.lower() for x in (result.get(lst) or [])}
+                for item in (r.get(lst) or []):
+                    if item and item.lower() not in seen:
+                        result.setdefault(lst, []).append(item); seen.add(item.lower())
+            if len(r.get("roleplay_prompt") or "") > len(result.get("roleplay_prompt") or ""):
+                result["roleplay_prompt"] = r["roleplay_prompt"]
+            if r.get("style_break") and not result.get("style_break"):
+                result["style_break"] = r["style_break"]
 
         style_break = result.get("style_break")
         if style_break:
