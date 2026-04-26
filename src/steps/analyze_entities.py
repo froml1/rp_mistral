@@ -548,5 +548,5 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
     if enrichment:
         write_enrichment(scene_file, "entities", enrichment)
 
-    print(f"    entities: {len(characters)} character(s), {len(concepts)} concept(s)")
+    print(f"    entities: {len(characters)} character(s), {len(which_out.get('concepts') or [])} concept(s)")
     return who_out, which_out
