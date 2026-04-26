@@ -136,6 +136,9 @@ For each concept:
 
 JSON:
 {{
+  "concepts": [{{"canonical_name": "", "type": "", "appellations": [], "description": "", "related_characters": [], "significance": "", "status": "unknown", "location": "unknown", "allies": [], "enemies": [], "access": "unknown"}}],
+  "author_to_character": {{}},
+  "ooc_messages": [],
   "characters": [{{
     "canonical_name": "", "author": "", "gender": "unknown", "age": "unknown", "species": "unknown",
     "appellations": [], "description_physical": "", "job": "", "main_locations": [],
@@ -156,9 +159,6 @@ JSON:
       "magic_control": null, "alchemy_or_science": null, "subterfuge": null, "performance": null}},
     "misc": []
   }}],
-  "concepts": [{{"canonical_name": "", "type": "", "appellations": [], "description": "", "related_characters": [], "significance": "", "status": "unknown", "location": "unknown", "allies": [], "enemies": [], "access": "unknown"}}],
-  "author_to_character": {{}},
-  "ooc_messages": [],
   "inconsistencies": []
 }}
 
@@ -543,8 +543,8 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
                 known_concepts_yaml=known_concepts_yaml,
                 text=_scene_text(chunk),
             ),
-            num_predict=4096,
-            num_ctx=8192,
+            num_predict=6144,
+            num_ctx=12288,
         )
         raw_results.append(r)
         # Build context for next chunk: names + roles found so far
