@@ -14,7 +14,7 @@ from steps.manual_lore import (
     load_manual_char, load_all_manual_chars, merge_manual_into_char,
     load_manual_concept, load_all_manual_concepts, merge_manual_into_concept,
 )
-from steps.synthesis import synthesis_context_block
+from steps.synthesis import current_scene_synthesis
 from steps.scene_patch import write_enrichment, chunk_messages
 from lore_summary import update_summary, summaries_for_dir
 try:
@@ -445,7 +445,7 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
 
     known_chars_yaml    = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known_chars.items())    or "none"
     known_concepts_yaml = "\n".join(f"- {n}: {d.get('_summary', '')}" for n, d in known_concepts.items()) or "none"
-    synthesis           = synthesis_context_block(lore_dir, current_scene_id=scene_id) if lore_dir else "none"
+    synthesis           = current_scene_synthesis(lore_dir, scene_id) if lore_dir else "none"
     authors_str         = ", ".join(authors)
 
     chunks = chunk_messages(messages)

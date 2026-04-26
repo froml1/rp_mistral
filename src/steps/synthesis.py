@@ -183,6 +183,23 @@ def load_lore_how(lore_dir: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
+def current_scene_synthesis(lore_dir: Path, scene_id: str) -> str:
+    """Return the step-5 synthesis of the current scene as a brief context string."""
+    lore_how = load_lore_how(lore_dir)
+    entry = (lore_how.get("scenes") or {}).get(scene_id)
+    if not entry:
+        return "none"
+    narrative = entry.get("narrative") or ""
+    char_parts = [c.get("name", "") for c in (entry.get("characters") or []) if c.get("name")]
+    tensions = [str(t) for t in (entry.get("tensions") or [])[:2]]
+    out = narrative
+    if char_parts:
+        out += f"  [characters: {', '.join(char_parts)}]"
+    if tensions:
+        out += f"  [tensions: {'; '.join(tensions)}]"
+    return out or "none"
+
+
 def synthesis_context_block(lore_dir: Path, current_scene_id: str | None = None, window: int = 12, characters: list[str] | None = None) -> str:
     """
     Format lore_how.yaml as a prompt injection block for analyze functions.
