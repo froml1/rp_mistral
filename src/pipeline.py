@@ -13,9 +13,9 @@ Steps:
   1 - Purge       data/exports/    -> data/purged/
   2 - Translate   data/purged/     -> data/translated/
   3 - Subdivide   data/translated/ -> data/scenes/
+                                      data/annotation_queue.json  (too_casual / no_narrative)
   4 - Clean       data/scenes/     (in-place: trim OOC edges, merge short scenes)
   5 - Synthesis   data/scenes/     -> data/lore/lore_how.yaml
-                                      data/rp_report.json      (non-RP scenes for review)
   6 - Analyze     data/scenes/     -> data/analysis/{scene_id}/
                                       data/lore/characters/ places/ concepts/
   7 - Post        voice fingerprints + general syntheses (batch, after all scenes)
@@ -142,7 +142,7 @@ def run_pipeline(
     if should_run(3):
         print("\n== STEP 3 - SUBDIVIDE ==")
         run_subdivide(TRANSLATED_DIR, SCENES_DIR, purged_dir=PURGED_DIR,
-                      report_path=DATA_DIR / "rp_report.json")
+                      annotation_path=DATA_DIR / "annotation_queue.json")
 
     if should_run(4):
         print("\n== STEP 4 - CLEAN ==")

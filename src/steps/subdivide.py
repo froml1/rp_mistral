@@ -5,10 +5,9 @@ For each scene file from translate:
   1. LLM detects all scene boundaries in one pass → N sub-scenes
   2. Drop duplicate opening messages vs previous scene
   3. Trim OOC prefix (heuristic + LLM for borderline cases)
-  4. Hard-reject only extreme non-RP (score < 0.15 AND no_narrative flag)
+  4. Exclude scenes flagged too_casual or no_narrative → annotation_queue.json
   5. Write surviving sub-scenes with rp_confidence metadata
   6. rp_filter.py (LLM + lore context) is the authoritative RP gate downstream
-  7. Append hard-rejected scenes to rp_report.json for manual review
 """
 
 import json
@@ -38,9 +37,8 @@ JSON: {{"boundaries": [5, 12, 23], "reasons": ["char group split", "location cha
 Messages (first 150 chars each):
 {messages}"""
 
-_MANIFEST        = "_manifest.json"
-MIN_MESSAGES     = 20
-_HARD_REJECT_SCORE = 0.15   # below this AND no_narrative → hard reject without LLM review
+_MANIFEST    = "_manifest.json"
+MIN_MESSAGES = 20
 
 # ── OOC / meta-RP patterns ────────────────────────────────────────────────────
 
@@ -48,7 +46,8 @@ _OOC_PATTERNS = re.compile(
     r'\b(lol|lmao|mdr|xd|haha|hihi|ahah|irl|ooc|brb|afk|ok\s|okay|'
     r'ce\s+soir|demain|ce\s+week|disponible|dispo|pas\s+là|absent|'
     r'on\s+joue|on\s+reporte|on\s+reprend|prêt\b|ready\b|'
-    r'désolé\b|sorry\b|connexion|internet|reboot|bug\s+technique)\b',
+    r'désolé\b|sorry\b|connexion|internet|reboot|bug\s+technique)\b'
+    r'|\^\^+',   # ASCII smileys (^^, ^^^, …)
     re.IGNORECASE,
 )
 
@@ -213,6 +212,11 @@ Or is GROUP A out-of-character player discussion that happened BEFORE GROUP B's 
 JSON: {{"same_scene": true}} or {{"same_scene": false}}"""
 
 
+def _meaningful_len(text: str) -> int:
+    """Alphanumeric character count — near-zero means the message is essentially a smiley."""
+    return len(re.sub(r'[^a-zA-ZÀ-ÿ0-9]', '', text))
+
+
 def _prefix_verdict(prefix: list[dict]) -> str:
     """
     Return 'keep', 'trim', or 'ask_llm' for the OOC prefix decision (D).
@@ -227,8 +231,14 @@ def _prefix_verdict(prefix: list[dict]) -> str:
     contents = [c for c in contents if c]
     if not contents:
         return "trim"
-    avg_len   = sum(len(c) for c in contents) / len(contents)
-    ooc_ratio = sum(1 for c in contents if _OOC_PATTERNS.search(c)) / len(contents)
+
+    avg_len        = sum(len(c) for c in contents) / len(contents)
+    meaningful_avg = sum(_meaningful_len(c) for c in contents) / len(contents)
+    ooc_ratio      = sum(1 for c in contents if _OOC_PATTERNS.search(c)) / len(contents)
+
+    # Essentially smiley-only messages (^^, xD !, …) — trim without further checks
+    if meaningful_avg < 5:
+        return "trim"
 
     if avg_len >= _KEEP_PREFIX_MIN_LEN and ooc_ratio < _KEEP_PREFIX_MAX_OOC:
         return "keep"
@@ -339,11 +349,13 @@ def _save_manifest(out_dir: Path, manifest: dict):
 
 def run_subdivide(translated_dir: Path, out_dir: Path,
                   purged_dir: Path | None = None,
-                  report_path: Path | None = None) -> list[Path]:
+                  report_path: Path | None = None,
+                  annotation_path: Path | None = None) -> list[Path]:
     """
     Split each translated scene file by narrative coherence.
 
-    Hard-reject only extreme non-RP (score < 0.15 AND no_narrative flag).
+    Scenes flagged too_casual or no_narrative are written to annotation_queue.json
+    for manual review and excluded from the synthesis pipeline.
     Everything else passes through with rp_confidence metadata so that
     rp_filter.py (LLM + lore context) can make the authoritative call.
     """
@@ -352,12 +364,16 @@ def run_subdivide(translated_dir: Path, out_dir: Path,
         print(f"  No translated scene files found in {translated_dir}")
         return []
 
+    if annotation_path is None:
+        annotation_path = out_dir.parent / "annotation_queue.json"
+
+    annotation_queue: dict = {}
+    if annotation_path.exists() and _is_valid_json(annotation_path):
+        annotation_queue = json.loads(annotation_path.read_text(encoding="utf-8"))
+
+    # Legacy support: keep report_path plumbing but write nothing to it
     if report_path is None:
         report_path = out_dir.parent / "rp_report.json"
-
-    rp_report: dict = {}
-    if report_path.exists() and _is_valid_json(report_path):
-        rp_report = json.loads(report_path.read_text(encoding="utf-8"))
 
     produced:      list[Path] = []
     prev_messages: list[dict] = []
@@ -401,7 +417,7 @@ def run_subdivide(translated_dir: Path, out_dir: Path,
             default=-1,
         ) + 1
 
-        accepted = rejected_rp = low_conf = 0
+        accepted = queued = low_conf = 0
         local_prev_messages = prev_messages
 
         for sub in sub_scenes:
@@ -410,14 +426,16 @@ def run_subdivide(translated_dir: Path, out_dir: Path,
 
             is_rp, rp_score, rp_flags = _heuristic_rp_check(sub)
 
-            # Hard-reject only when there is absolutely no narrative signal (A)
-            if rp_score < _HARD_REJECT_SCORE and "no_narrative" in rp_flags:
-                rejected_rp += 1
+            # Route to annotation queue — no narrative structure or too casual to evaluate
+            if "too_casual" in rp_flags or "no_narrative" in rp_flags:
+                queued += 1
                 tmp_id = f"{stem}_{next_idx:03d}"
-                rp_report[tmp_id] = {
+                reason = "too_casual" if "too_casual" in rp_flags else "no_narrative"
+                annotation_queue[tmp_id] = {
                     "source":   source,
                     "rp_score": rp_score,
                     "rp_flags": rp_flags,
+                    "reason":   reason,
                     "n_msgs":   len(sub),
                     "preview":  ((sub[0].get("content_en") or sub[0].get("content", ""))[:120]) if sub else "",
                 }
@@ -448,16 +466,16 @@ def run_subdivide(translated_dir: Path, out_dir: Path,
         prev_messages = local_prev_messages
 
         parts = [f" → {accepted} kept"]
-        if low_conf:    parts.append(f"{low_conf} low-confidence")
-        if rejected_rp: parts.append(f"{rejected_rp} hard-rejected")
+        if low_conf: parts.append(f"{low_conf} low-confidence")
+        if queued:   parts.append(f"{queued} → annotation")
         print(",  ".join(parts))
 
         manifest[fp.stem] = kept_ids
         _save_manifest(out_subdir, manifest)
 
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps(rp_report, ensure_ascii=False, indent=2), encoding="utf-8")
-    if rp_report:
-        print(f"  [rp report] {len(rp_report)} hard-rejected scene(s) → {report_path}")
+    annotation_path.parent.mkdir(parents=True, exist_ok=True)
+    annotation_path.write_text(json.dumps(annotation_queue, ensure_ascii=False, indent=2), encoding="utf-8")
+    if annotation_queue:
+        print(f"  [annotation] {len(annotation_queue)} scene(s) queued → {annotation_path}")
 
     return produced
