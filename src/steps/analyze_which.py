@@ -101,9 +101,11 @@ def _enrich_concept_from_lore(extracted: dict, existing: dict) -> dict:
     """Fill gaps in the freshly-extracted concept with data from existing lore. Extracted data takes priority."""
     enriched = dict(extracted)
     for field in ("type", "status", "location", "access"):
-        v = (enriched.get(field) or "").strip().lower()
+        raw = enriched.get(field)
+        v = (raw[0] if isinstance(raw, list) else raw or "").strip().lower()
         if not v or v == "unknown":
-            lore_val = (existing.get(field) or "").strip().lower()
+            lore_raw = existing.get(field)
+            lore_val = (lore_raw[0] if isinstance(lore_raw, list) else lore_raw or "").strip().lower()
             if lore_val and lore_val != "unknown":
                 enriched[field] = lore_val
     for text_field in ("description", "significance"):
@@ -255,15 +257,10 @@ def run_which(
     concepts = list(concept_map.values())
 
     for i, concept in enumerate(concepts):
-        existing = _load_concept_yaml(concepts_dir, concept["canonical_name"])
-        concept = _enrich_concept_from_lore(concept, existing)
+        existing    = _load_concept_yaml(concepts_dir, concept["canonical_name"])
+        concept     = _enrich_concept_from_lore(concept, existing)
         concepts[i] = concept
-        merged   = _merge_concept(existing, concept, scene_id)
-        merged   = merge_manual_into_concept(merged, load_manual_concept(concept["canonical_name"]))
-        _save_concept_yaml(concepts_dir, concept["canonical_name"], merged)
-        summary  = update_summary(concepts_dir / f"{_slug(concept['canonical_name'])}.yaml", "concepts")
-        _store_upsert("concepts", merged["name"], summary)
-        print(f"    concept updated: {concept['canonical_name']}")
+        print(f"    concept extracted: {concept['canonical_name']}")
 
     output = {
         "concepts": [c.get("canonical_name") for c in concepts],

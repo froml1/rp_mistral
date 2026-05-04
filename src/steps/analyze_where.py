@@ -135,13 +135,8 @@ def run_where(scene_file: Path, analysis_dir: Path, places_dir: Path) -> dict:
 
     locations = [l for l in (result.get("locations") or []) if isinstance(l, dict) and l.get("canonical_name")]
 
-    # Update place YAMLs
     for loc in locations:
-        existing = _load_place_yaml(places_dir, loc["canonical_name"])
-        merged = _merge_place(existing, loc, scene_id)
-        merged = merge_manual_into_place(merged, load_manual_place(loc["canonical_name"]))
-        _save_place_yaml(places_dir, loc["canonical_name"], merged)
-        print(f"    place updated: {loc['canonical_name']}")
+        print(f"    place extracted: {loc['canonical_name']}")
 
     output = {
         "locations":        [l.get("canonical_name") for l in locations],

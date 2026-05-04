@@ -403,12 +403,7 @@ def run_who(scene_file: Path, analysis_dir: Path, chars_dir: Path) -> dict:
     characters = [c for c in (result.get("characters") or []) if isinstance(c, dict) and c.get("canonical_name")]
 
     for char in characters:
-        existing = _load_char_yaml(chars_dir, char["canonical_name"])
-        merged = _merge_char(existing, char, scene_id)
-        # Apply manual overrides on top of merged LLM data
-        merged = merge_manual_into_char(merged, load_manual_char(char["canonical_name"]))
-        _save_char_yaml(chars_dir, char["canonical_name"], merged)
-        print(f"    character updated: {char['canonical_name']}")
+        print(f"    character extracted: {char['canonical_name']}")
 
     output = {
         "characters": [c.get("canonical_name") for c in characters],

@@ -39,10 +39,8 @@ from steps.analyze_entities import run_entities
 from steps.analyze_what     import run_what
 from steps.analyze_how      import run_how
 from steps.analyze_voice    import run_voice
-from steps.general_lore  import (
-    update_general_who, update_general_where, update_general_which,
-    update_general_what,
-)
+from steps.general_lore      import update_general_what
+from steps.lore_synthesis    import run_lore_synthesis
 
 DATA_DIR       = ROOT / "data"
 EXPORTS_DIR    = DATA_DIR / "exports"
@@ -92,11 +90,6 @@ def run_step7(scene_files: list[Path], only_scene: str | None = None):
         print(f"\n  [voice] {scene_id}")
         run_voice(scene_file, ad, who)
 
-    print("\n  [generals] compiling who / where / which…")
-    update_general_who(chars_dir, LORE_DIR)
-    update_general_where(places_dir, LORE_DIR)
-    update_general_which(concepts_dir, LORE_DIR)
-
     print("  [store] rebuilding ChromaDB index…")
     try:
         from store import reindex
@@ -122,6 +115,7 @@ def run_pipeline(
     only_step: int | None = None,
     only_scene: str | None = None,
     skip_translation: bool = False,
+    with_llm_disambig: bool = False,
 ):
     def should_run(step: int) -> bool:
         if only_step is not None:
@@ -170,12 +164,16 @@ def run_pipeline(
         run_step6(scene_files, only_scene=only_scene)
 
     if should_run(7):
-        print("\n== STEP 7 - POST (voice + generals) ==")
+        print("\n== STEP 7 - POST (voice + what/how generals) ==")
         scene_files = _scene_files()
         if not scene_files:
             print("  No scene files found.")
             return
         run_step7(scene_files, only_scene=only_scene)
+
+    if should_run(8):
+        print("\n== STEP 8 - LORE SYNTHESIS (entity resolution) ==")
+        run_lore_synthesis(ANALYSIS_DIR, LORE_DIR, with_llm_disambig=with_llm_disambig)
 
     print("\n== PIPELINE DONE ==")
 
@@ -185,9 +183,11 @@ if __name__ == "__main__":
     parser.add_argument("exports_dir", nargs="?", default="data/exports",
                         help="Raw exports directory (step 1 input)")
     parser.add_argument("--from-step", type=int, default=1, dest="from_step",
-                        help="Resume from step N (1-7)")
+                        help="Resume from step N (1-8)")
     parser.add_argument("--only-step", type=int, default=None, dest="only_step",
-                        help="Run only step N (1-7)")
+                        help="Run only step N (1-8)")
+    parser.add_argument("--with-llm-disambig", action="store_true", dest="with_llm_disambig",
+                        help="Step 8: use LLM to resolve ambiguous entity clusters")
     parser.add_argument("--scene", type=str, default=None,
                         help="Process only this scene ID (step 6)")
     parser.add_argument("--skip-translation", action="store_true", dest="skip_translation",
@@ -200,4 +200,5 @@ if __name__ == "__main__":
         only_step=args.only_step,
         only_scene=args.scene,
         skip_translation=args.skip_translation,
+        with_llm_disambig=getattr(args, "with_llm_disambig", False),
     )
