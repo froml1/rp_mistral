@@ -220,8 +220,10 @@ def run_how(scene_file: Path, analysis_dir: Path, when: dict, where: dict, who: 
         for rel in (r.get("character_relations") or []):
             if not isinstance(rel, dict) or not rel.get("from_char") or not rel.get("to_char"):
                 continue
-            fc = rel["from_char"].lower()
-            tc = rel["to_char"].lower()
+            raw_fc = rel["from_char"]
+            raw_tc = rel["to_char"]
+            fc = (raw_fc[0] if isinstance(raw_fc, list) else raw_fc).lower()
+            tc = (raw_tc[0] if isinstance(raw_tc, list) else raw_tc).lower()
             if present_chars and (fc not in present_chars or tc not in present_chars):
                 continue
             key = (fc, tc, rel.get("relation_type", "").lower())
