@@ -50,7 +50,7 @@ def _resolve_exports(exports_dir: str) -> str:
     return str(p)
 
 
-def _run_pipeline(from_step, only_step, scene_id, exports_dir, skip_translation=False):
+def _run_pipeline(from_step, only_step, scene_id, exports_dir, skip_translation=False, with_llm_disambig=False):
     global _pipeline_running, _pipeline_proc, _pipeline_exit_code
     _pipeline_running = True
     _pipeline_exit_code = None
@@ -65,6 +65,8 @@ def _run_pipeline(from_step, only_step, scene_id, exports_dir, skip_translation=
         cmd += ["--scene", scene_id.strip()]
     if skip_translation:
         cmd += ["--skip-translation"]
+    if with_llm_disambig:
+        cmd += ["--with-llm-disambig"]
 
     _pipeline_log.append(f"[cmd] {' '.join(cmd)}")
     _pipeline_log.append(f"[python exists] {Path(PYTHON).exists()}")
@@ -93,7 +95,7 @@ def _run_pipeline(from_step, only_step, scene_id, exports_dir, skip_translation=
         _pipeline_proc = None
 
 
-def start_pipeline(from_step, only_step_str, scene_id, exports_dir, skip_translation):
+def start_pipeline(from_step, only_step_str, scene_id, exports_dir, skip_translation, with_llm_disambig):
     import time
     if _pipeline_running:
         yield "Pipeline already running…", get_pipeline_log()
@@ -101,7 +103,7 @@ def start_pipeline(from_step, only_step_str, scene_id, exports_dir, skip_transla
     only_step = int(only_step_str) if only_step_str.strip() else None
     threading.Thread(
         target=_run_pipeline,
-        args=(from_step, only_step, scene_id, exports_dir, skip_translation),
+        args=(from_step, only_step, scene_id, exports_dir, skip_translation, with_llm_disambig),
         daemon=True,
     ).start()
     time.sleep(0.2)
@@ -495,13 +497,13 @@ with gr.Blocks(title="RP_IA") as app:
                     scale=3,
                 )
                 from_step_slider = gr.Slider(
-                    minimum=1, maximum=7, step=1, value=1,
-                    label="From step  (1=purge 2=translate 3=subdivide 4=clean 5=synthesis 6=analyze 7=post)",
+                    minimum=1, maximum=8, step=1, value=1,
+                    label="From step  (1=purge 2=translate 3=subdivide 4=clean 5=synthesis 6=analyze 7=post 8=lore-synthesis)",
                     scale=1,
                 )
                 only_step_input = gr.Textbox(
                     value="",
-                    label="Only step (blank = all, 1-7)",
+                    label="Only step (blank = all, 1-8)",
                     scale=1,
                 )
                 scene_input = gr.Textbox(
@@ -514,6 +516,11 @@ with gr.Blocks(title="RP_IA") as app:
                 skip_translation_cb = gr.Checkbox(
                     value=False,
                     label="Pas de traduction (corpus en langue originale)",
+                    scale=2,
+                )
+                llm_disambig_cb = gr.Checkbox(
+                    value=False,
+                    label="Step 8 — LLM disambiguation (entités ambiguës)",
                     scale=2,
                 )
                 run_btn  = gr.Button("Run Pipeline", variant="primary", scale=2)
@@ -529,7 +536,7 @@ with gr.Blocks(title="RP_IA") as app:
 
             run_btn.click(
                 start_pipeline,
-                [from_step_slider, only_step_input, scene_input, exports_input, skip_translation_cb],
+                [from_step_slider, only_step_input, scene_input, exports_input, skip_translation_cb, llm_disambig_cb],
                 [status, log_box],
             )
             stop_btn.click(stop_pipeline, outputs=status)
