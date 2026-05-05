@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json, model_for
 
-BATCH_SIZE = 40
+BATCH_SIZE = 20
 WORKERS    = int(os.getenv("RP_TRANSLATE_WORKERS", "4"))
 
 _print_lock = threading.Lock()
@@ -53,13 +53,19 @@ def _save_scene(out_path: Path, scene: dict):
 def _translate_batch(messages: list[dict], batch_label: str) -> dict[int, str]:
     formatted = "\n".join(f"[{i}] {m.get('content', '')}" for i, m in enumerate(messages))
     _log(f"    -> batch {batch_label} ({len(messages)} msgs)...")
-    data = call_llm_json(_PROMPT.format(messages=formatted), num_predict=2048, num_ctx=8192,
+    # num_predict: 20 msgs × ~150 tokens avg output = 3000, +json overhead → 4096
+    data = call_llm_json(_PROMPT.format(messages=formatted), num_predict=4096, num_ctx=8192,
                          model=model_for("translate"))
-    return {
+    result = {
         item["index"]: item.get("content_en", "")
         for item in (data.get("messages") or [])
         if isinstance(item, dict) and "index" in item
     }
+    if not result:
+        _log(f"    [warn] batch {batch_label}: LLM returned empty — keeping originals")
+    elif len(result) < len(messages):
+        _log(f"    [warn] batch {batch_label}: got {len(result)}/{len(messages)} translations")
+    return result
 
 
 def _translate_scene_file(fp: Path, out_path: Path):
