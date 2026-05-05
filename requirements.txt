@@ -7,3 +7,4 @@ gradio
 pyyaml
 requests
 python-dateutil
+deep-translator
