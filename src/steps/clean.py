@@ -23,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from llm import call_llm_json
+from llm import call_llm_json, model_for
 
 MIN_MERGE_MESSAGES = 15
 MIN_PURGE_MESSAGES = 10
@@ -139,6 +139,7 @@ def _should_merge(prev_msgs: list[dict], curr_msgs: list[dict]) -> bool:
     result = call_llm_json(
         _MERGE_PROMPT.format(seg_a=seg_a, seg_b=seg_b, gap_str=gap_str),
         num_predict=60,
+        model=model_for("clean"),
     )
     return bool(result.get("merge"))
 
@@ -297,7 +298,7 @@ def run_clean(scenes_dir: Path) -> None:
                 print(f"    [trim] {stem}: -{n_pre} prefix, -{n_suf} suffix  ({len(trimmed)} remain)")
                 total_trimmed += 1
 
-            if len(trimmed) < MIN_MERGE_MESSAGES and prev_path is not None and prev_msgs:
+            if prev_path is not None and prev_msgs:
                 if _should_merge(prev_msgs, trimmed):
                     print(f"    [merge] {stem} → {prev_path.stem}")
                     prev_data = json.loads(prev_path.read_text(encoding="utf-8"))

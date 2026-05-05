@@ -491,7 +491,7 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
         raw_results.append(r)
         # Build context for next chunk: names + roles found so far
         char_lines = [
-            f"- {c.get('canonical_name', '')} ({c.get('job', '') or c.get('description_psychological', '')[:40]})"
+            f"- {c.get('canonical_name', '')} ({c.get('job', '') or (c.get('description_psychological') or '')[:40]})"
             for c in (r.get("characters") or []) if c.get("canonical_name")
         ]
         concept_lines = [

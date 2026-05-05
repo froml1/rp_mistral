@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from llm import call_llm_json
+from llm import call_llm_json, model_for
 from steps.synthesis import synthesis_context_block
 
 _PROMPT = """\
@@ -108,6 +108,7 @@ def run_rp_filter(scenes_dir: Path, lore_dir: Path, analysis_dir: Path) -> dict:
                 text=text,
             ),
             num_predict=256,
+            model=model_for("rp_filter"),
             num_ctx=4096,
         )
 

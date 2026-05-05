@@ -42,7 +42,7 @@ _DISCORD_QUOTE = re.compile(
     re.IGNORECASE,
 )
 
-_SCENE_BREAK_SECS  = 1800  # 30 min → new scene
+_SCENE_BREAK_SECS  =  600  # 10 min → new scene
 _SESSION_END_SECS  = 3600  # 60 min → new session (= new scene)
 MIN_SCENE_MESSAGES = 20
 
@@ -54,6 +54,15 @@ def _parse_ts(ts: str) -> datetime | None:
         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _strip_hrp(text: str) -> str:
+    """Remove all (HRP content) including nested parentheses, then collapse whitespace."""
+    prev = None
+    while prev != text:
+        prev = text
+        text = re.sub(r'\([^()]*\)', '', text)
+    return re.sub(r'\s+', ' ', text).strip()
 
 
 def _clean(text: str) -> str:
@@ -121,15 +130,23 @@ def purge_export(filepath: Path, out_dir: Path, verbose: bool = True,
         content = msg.get("content", "").strip()
         ts = _parse_ts(msg.get("timestamp", ""))
 
+        # Time-gap tracking happens before any content filtering
         if last_ts and ts:
             gap = (ts - last_ts).total_seconds()
-            if gap > _SCENE_BREAK_SECS:          # covers both 30-min and 60-min cases
+            if gap > _SCENE_BREAK_SECS:
                 scene_idx += 1
                 if verbose:
                     tag = "session" if gap > _SESSION_END_SECS else "scene"
                     print(f"  [new {tag}] gap {int(gap//60)}min → #{scene_idx} | {ts.strftime('%Y-%m-%d %H:%M')}")
         if ts:
             last_ts = ts
+
+        # Strip HRP content in parentheses before any other check
+        cleaned = _strip_hrp(content)
+        if cleaned != content:
+            msg = dict(msg)
+            msg["content"] = cleaned
+            content = cleaned
 
         if _should_drop(content):
             continue

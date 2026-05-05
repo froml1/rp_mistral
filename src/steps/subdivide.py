@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from llm import call_llm_json
+from llm import call_llm_json, model_for
 
 _SPLIT_PROMPT = """\
 You are analyzing a sequence of RP messages. Find ALL scene boundaries.
@@ -57,6 +57,22 @@ _META_RP_PATTERNS = re.compile(
     r'vous avez (joué|fait)|cette session|le RP (d[eu]|hier)|'
     r"incroyable comme|j'ai adoré|c'était (bien|super|génial|trop)|"
     r'trop (bien|bon|fort) (ce|cette|le|la)|cette scène (était|a été))\b',
+    re.IGNORECASE,
+)
+
+# Explicit session-start markers — force a scene boundary regardless of LLM.
+# "je lance" is matched only at end-of-message or before a meta noun (scène/rp/session)
+# to avoid matching in-character "je lance une boule de feu".
+_START_MARKERS = re.compile(
+    r'\b('
+    r'je\s+(commence|démarre|start)\b|'
+    r'on\s+(commence|démarre|lance)\b|'
+    r'je\s+lance(?:\s+(?:la\s+scène|le\s+rp|la\s+session|ça|cela))?\s*[!.?…]*\s*$|'
+    r"c'est\s+parti\b|"
+    r"let'?s\s+(go|start|begin)\b|"
+    r'\bi\s+start\b|\bi\s+begin\b|'
+    r'\bstarting\s+now\b'
+    r')',
     re.IGNORECASE,
 )
 
@@ -278,6 +294,7 @@ def _trim_rp_prefix(messages: list[dict]) -> list[dict]:
                 rp_open=_scene_text(rp_open),
             ),
             num_predict=50,
+            model=model_for("prefix"),
         )
         if result.get("same_scene", False):
             print(f"    [trim] prefix kept — LLM: same scene")
@@ -288,6 +305,27 @@ def _trim_rp_prefix(messages: list[dict]) -> list[dict]:
     # verdict == "trim"
     print(f"    [trim] {anchor} prefix message(s) cut")
     return messages[anchor:]
+
+
+# ── Start-marker boundary detection ──────────────────────────────────────────
+
+def _is_start_marker_msg(msg: dict) -> bool:
+    """True if this message is a short OOC 'I start / je lance' signal."""
+    content = (msg.get("content_en") or msg.get("content", "")).strip()
+    if not _START_MARKERS.search(content):
+        return False
+    # Ignore long messages — likely in-character narrative ("je lance un sort…")
+    if len(content) > 80:
+        return False
+    # Ignore messages that contain a narrative asterisk action
+    if re.search(r'\*[^*]{15,}\*', content):
+        return False
+    return True
+
+
+def _find_marker_boundaries(messages: list[dict]) -> list[int]:
+    """Return indices (≥ 1) where a start marker forces a new scene."""
+    return [i for i, m in enumerate(messages) if i > 0 and _is_start_marker_msg(m)]
 
 
 # ── LLM split ─────────────────────────────────────────────────────────────────
@@ -304,20 +342,31 @@ def _split(messages: list[dict]) -> list[list[dict]]:
     if len(messages) < 4:
         return [messages]
 
+    # Hard boundaries from explicit start markers (no LLM needed)
+    marker_bounds: set[int] = set(_find_marker_boundaries(messages))
+    for b in sorted(marker_bounds):
+        preview = (messages[b].get("content_en") or messages[b].get("content", ""))[:50]
+        print(f"    split [{b}] — start marker: {preview!r}")
+
+    # LLM coherence boundaries
     data    = call_llm_json(
         _SPLIT_PROMPT.format(messages=_scene_text(messages)),
         num_predict=200,
+        model=model_for("split"),
     )
     raw     = data.get("boundaries") or []
     reasons = data.get("reasons") or []
-    bounds  = sorted(set(b for b in raw if isinstance(b, int) and 1 <= b < len(messages)))
+    llm_bounds = [b for b in raw if isinstance(b, int) and 1 <= b < len(messages)]
+
+    for i, b in enumerate(llm_bounds):
+        if b not in marker_bounds:
+            reason = reasons[i] if i < len(reasons) else ""
+            print(f"    split [{b}]" + (f" — {reason}" if reason else ""))
+
+    bounds = sorted(marker_bounds | set(llm_bounds))
 
     if not bounds:
         return [messages]
-
-    for i, b in enumerate(bounds):
-        reason = reasons[i] if i < len(reasons) else ""
-        print(f"    split [{b}]" + (f" — {reason}" if reason else ""))
 
     segments, prev = [], 0
     for b in bounds:

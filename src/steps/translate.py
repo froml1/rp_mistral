@@ -1,26 +1,40 @@
 """Step 2 - Translate: add content_en to each scene file."""
 
 import json
+import os
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from llm import call_llm_json
+from llm import call_llm_json, model_for
 
-BATCH_SIZE = 20
+BATCH_SIZE = 40
+WORKERS    = int(os.getenv("RP_TRANSLATE_WORKERS", "4"))
+
+_print_lock = threading.Lock()
 
 _PROMPT = """\
-Translate the following Discord RP messages from French to English.
-Preserve narrative style, names, and formatting (*actions*, "dialogue").
-Return JSON: {{"messages": [{{"index": 0, "content_en": "..."}}]}}
+Translate these Discord roleplay messages from French to English.
+
+Rules:
+- Preserve *narrative action* and "dialogue" markers exactly as-is
+- Do NOT translate proper nouns: character names, place names, item or faction names
+- Match the tone of each message (formal noble speech stays formal, crude stays crude)
+- Empty or punctuation-only messages: copy unchanged
+- Output one entry per input index, same order, no skips
+
+Return ONLY valid JSON: {{"messages": [{{"index": 0, "content_en": "..."}}]}}
 
 Messages:
 {messages}"""
 
 
 def _log(msg: str):
-    print(msg, flush=True)
+    with _print_lock:
+        print(msg, flush=True)
 
 
 def _is_valid_json(path: Path) -> bool:
@@ -39,7 +53,8 @@ def _save_scene(out_path: Path, scene: dict):
 def _translate_batch(messages: list[dict], batch_label: str) -> dict[int, str]:
     formatted = "\n".join(f"[{i}] {m.get('content', '')}" for i, m in enumerate(messages))
     _log(f"    -> batch {batch_label} ({len(messages)} msgs)...")
-    data = call_llm_json(_PROMPT.format(messages=formatted), num_predict=2048, num_ctx=8192)
+    data = call_llm_json(_PROMPT.format(messages=formatted), num_predict=2048, num_ctx=8192,
+                         model=model_for("translate"))
     return {
         item["index"]: item.get("content_en", "")
         for item in (data.get("messages") or [])
@@ -95,31 +110,46 @@ def _passthrough_scene_file(fp: Path, out_path: Path):
 
 def run_translate(purged_dir: Path, out_dir: Path,
                   exports_dir: Path | None = None,
-                  passthrough: bool = False) -> list[Path]:
+                  passthrough: bool = False,
+                  workers: int = WORKERS) -> list[Path]:
     """
     Translate all scene files under purged_dir/**/*.json.
     Mirrors the subdir structure into out_dir.
+    Scene files are processed in parallel (workers). Each scene serialises its
+    own batches internally. Requires Ollama started with OLLAMA_NUM_PARALLEL≥workers.
     """
     scene_files = sorted(purged_dir.glob("**/*.json"))
     if not scene_files:
         _log(f"  No scene files found in {purged_dir}")
         return []
 
-    produced = []
+    pairs: list[tuple[Path, Path]] = []
     for fp in scene_files:
-        rel      = fp.relative_to(purged_dir)
-        out_path = out_dir / rel
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-
         if not _is_valid_json(fp):
             _log(f"  [error] {fp.name} is malformed, skipping")
             continue
+        rel      = fp.relative_to(purged_dir)
+        out_path = out_dir / rel
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        pairs.append((fp, out_path))
 
-        if passthrough:
-            _passthrough_scene_file(fp, out_path)
-        else:
-            _translate_scene_file(fp, out_path)
+    produced: list[Path] = []
+    produced_lock = threading.Lock()
 
-        produced.append(out_path)
+    fn = _passthrough_scene_file if passthrough else _translate_scene_file
+
+    _log(f"  [translate] {len(pairs)} scene files — {workers} parallel workers, batch={BATCH_SIZE}")
+    _log(f"  [translate] tip: start Ollama with OLLAMA_NUM_PARALLEL={workers} for full speedup")
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_to_fp = {executor.submit(fn, fp, out_path): out_path for fp, out_path in pairs}
+        for future in as_completed(future_to_fp):
+            out_path = future_to_fp[future]
+            try:
+                future.result()
+                with produced_lock:
+                    produced.append(out_path)
+            except Exception as exc:
+                _log(f"  [error] {out_path.name}: {exc}")
 
     return produced
