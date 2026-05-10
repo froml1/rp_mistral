@@ -166,7 +166,7 @@ def merge_manual_into_char(llm_char: dict, manual_char: dict) -> dict:
     if not manual_char:
         return llm_char
     result = dict(llm_char)
-    for field in ("description_physical", "description_psychological", "job", "author"):
+    for field in ("description_physical", "description_psychological", "job", "author", "family_name"):
         result[field] = _merge_str(manual_char.get(field, ""), result.get(field, ""))
     for field in ("appellations", "beliefs", "likes", "dislikes", "main_locations", "relations", "misc", "relations"):
         result[field] = _merge_list_priority(manual_char.get(field, []), result.get(field, []))

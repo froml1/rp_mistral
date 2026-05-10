@@ -74,6 +74,15 @@ def _names_match(a: str, b: str) -> bool:
     # Edit distance proportional to name length
     if _levenshtein(na, nb) <= max(1, len(short) // 5):
         return True
+    # Same forename + one family name is a suffix of the other
+    # (handles noble prefixes: "kassel" ↔ "herkassel", "de kassel" ↔ "kassel")
+    parts_a, parts_b = na.split(), nb.split()
+    if len(parts_a) >= 2 and len(parts_b) >= 2 and parts_a[0] == parts_b[0]:
+        last_a = " ".join(parts_a[1:])
+        last_b = " ".join(parts_b[1:])
+        s, l = (last_a, last_b) if len(last_a) <= len(last_b) else (last_b, last_a)
+        if len(s) >= 4 and s in l:
+            return True
     return False
 
 
@@ -277,27 +286,38 @@ def _synthesize_chars(
             }
             clusters = {**clusters, **_llm_disambiguate(uncertain, contexts)}
 
-    # Merge and write
-    count = 0
+    # Merge all clusters into memory first, then clean cross-contamination
+    final_chars: dict[str, dict] = {}
     for canonical, variants in clusters.items():
         merged: dict = {}
-        # Collect all extractions for this cluster (across all variant names)
-        appearances: list[str] = []
         for v in variants:
             for scene_id, extraction in raw_extractions.get(v, []):
                 merged = _merge_char(merged, extraction, scene_id)
-                if scene_id not in appearances:
-                    appearances.append(scene_id)
 
         if not merged:
             continue
 
-        # Force canonical name
         merged["name"] = canonical
         merged["aliases"] = sorted({v for v in variants if v != canonical.lower()})
-
-        # Apply manual overrides last
         merged = merge_manual_into_char(merged, load_manual_char(canonical))
+        final_chars[canonical] = merged
+
+    # Remove appellations that exactly match another character's canonical name.
+    # Prevents LLM co-occurrence confusion (e.g. "antoine" ending up in Azael's appellations).
+    all_canonicals_lower = {c.lower() for c in final_chars}
+    for canonical, char_data in final_chars.items():
+        own_lower = canonical.lower()
+        cleaned = [
+            a for a in (char_data.get("appellations") or [])
+            if a.lower() == own_lower or a.lower() not in all_canonicals_lower
+        ]
+        if len(cleaned) != len(char_data.get("appellations") or []):
+            removed = set(char_data.get("appellations", [])) - set(cleaned)
+            print(f"    [dedup] {canonical}: removed cross-contaminated appellations {removed}")
+        char_data["appellations"] = cleaned
+
+    count = 0
+    for canonical, merged in final_chars.items():
         _save_char_yaml(chars_dir, canonical, merged)
         count += 1
 

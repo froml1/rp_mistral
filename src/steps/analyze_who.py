@@ -37,9 +37,10 @@ For each character (not author) active in this scene, extract:
 
 IDENTITY
 - canonical_name: full name in lowercase (e.g. "lena marchal")
+- family_name: family/clan/house name only, null if not known or not applicable (e.g. "marchal", "herkassel")
 - author: Discord username who plays this character (e.g. "yaya") — pick from the author hints above
 - appellations: all names/references excluding pronouns (e.g. ["lena", "miss marchal", "the chrome mask"])
-- description_physical: physical appearance details
+- description_physical: VISIBLE body/face/clothing details ONLY. null if no physical appearance is shown in this scene. Do NOT put actions, psychology, or backstory here.
 - job: occupation or social role
 - main_locations: places associated with this character
 - relations: relationships with other characters, each as {{"character": "name", "relation": "type"}} (e.g. frère, allié, ennemi)
@@ -107,8 +108,9 @@ JSON:
   "characters": [{{
     "author": "",
     "canonical_name": "",
+    "family_name": null,
     "appellations": [],
-    "description_physical": "",
+    "description_physical": null,
     "job": "",
     "main_locations": [],
     "relations": [{{"character": "", "relation": ""}}],
@@ -270,6 +272,7 @@ def _merge_emotional_polarity(existing: dict, new_ep: dict) -> dict:
 def _merge_char(existing: dict, extracted: dict, scene_id: str) -> dict:
     merged = dict(existing)
     merged.setdefault("name", extracted.get("canonical_name", ""))
+    merged.setdefault("family_name", None)
     merged.setdefault("appellations", [])
     merged.setdefault("description_physical", "")
     merged.setdefault("description_psychological", "")
@@ -286,9 +289,19 @@ def _merge_char(existing: dict, extracted: dict, scene_id: str) -> dict:
     merged.setdefault("misc", [])
     merged.setdefault("appearances", [])
 
+    # family_name: keep first non-null value seen
+    new_fn = (extracted.get("family_name") or "").strip().lower() or None
+    if new_fn and not merged.get("family_name"):
+        merged["family_name"] = new_fn
+
     _merge_list(merged["appellations"], extracted.get("appellations") or [])
 
-    for field in ("description_physical", "description_psychological", "job", "author"):
+    # description_physical: only accept non-null; prefer longer (richer) but never overwrite with noise
+    new_phys = (extracted.get("description_physical") or "").strip().lower()
+    if new_phys and len(new_phys) > len(merged.get("description_physical") or ""):
+        merged["description_physical"] = new_phys
+
+    for field in ("description_psychological", "job", "author"):
         new_val = (extracted.get(field) or "").strip().lower()
         if new_val and len(new_val) > len(merged.get(field) or ""):
             merged[field] = new_val
