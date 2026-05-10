@@ -47,6 +47,13 @@ ANALYSIS_DIR  = DATA_DIR / "analysis"
 CONFIRMED_DIR = DATA_DIR / "confirmed_scenes"
 
 MAX_SCENES    = 8
+
+
+def _s(v) -> str:
+    """Safely coerce any LLM-returned value to str (handles list, None, int…)."""
+    if isinstance(v, list):
+        return str(v[0]) if v else ""
+    return str(v) if v is not None else ""
 MAX_CTX_CHARS = 14000
 
 # ── Lore loading ───────────────────────────────────────────────────────────────
@@ -289,9 +296,9 @@ def detect_intent(question: str) -> str:
 def _names_for(entity: dict) -> list[str]:
     names = []
     if entity.get("name"):
-        names.append(entity["name"].lower())
+        names.append(_s(entity["name"]).lower())
     for a in entity.get("appellations") or []:
-        names.append(str(a).lower())
+        names.append(_s(a).lower())
     return names
 
 
@@ -458,7 +465,7 @@ def query_events(question: str, lore: dict) -> str:
         what = _load_json(scene_dir / "what.json")
         scene_id = scene_dir.name
         for ev in (what.get("events") or []):
-            desc = (ev.get("description") or "").lower()
+            desc = _s(ev.get("description")).lower()
             if any(kw in desc for kw in keywords):
                 chars = ", ".join(ev.get("characters") or [])
                 matches.append({
@@ -512,9 +519,9 @@ def query_links(question: str, lore: dict) -> str:
         sid = scene_dir.name
 
         for link in (how.get("links") or []):
-            frm  = (link.get("from_element") or "").lower()
-            to   = (link.get("to_element") or "").lower()
-            ltype = (link.get("link_type") or "").lower()
+            frm  = _s(link.get("from_element")).lower()
+            to   = _s(link.get("to_element")).lower()
+            ltype = _s(link.get("link_type")).lower()
             desc  = link.get("description", "")
 
             term_hit  = any(t in frm or t in to for t in terms) if terms else True
@@ -524,8 +531,8 @@ def query_links(question: str, lore: dict) -> str:
                 link_matches.append(f"[{sid}] {frm} —{ltype}→ {to}: {desc[:80]}")
 
         for rel in (how.get("character_relations") or []):
-            frm  = (rel.get("from_char") or "").lower()
-            to   = (rel.get("to_char") or "").lower()
+            frm  = _s(rel.get("from_char")).lower()
+            to   = _s(rel.get("to_char")).lower()
             rtype = rel.get("relation_type", "")
             sent  = rel.get("sentiment", "")
             desc  = rel.get("description", "")
@@ -556,7 +563,7 @@ def query_combo(question: str, lore: dict) -> str:
     for c in lore["characters"]:
         for name in _names_for(c):
             if any(t in name or name in t for t in terms):
-                char_names.add(c.get("name", "").lower())
+                char_names.add(_s(c.get("name")).lower())
 
     if len(char_names) < 2:
         return (
@@ -569,7 +576,7 @@ def query_combo(question: str, lore: dict) -> str:
         if not scene_dir.is_dir():
             continue
         who = _load_json(scene_dir / "who.json")
-        scene_chars = {c.lower() for c in (who.get("characters") or [])}
+        scene_chars = {_s(c).lower() for c in (who.get("characters") or [])}
         if char_names.issubset(scene_chars):
             matches.append(scene_dir.name)
 
@@ -591,12 +598,12 @@ def query_entity(question: str, lore: dict) -> str:
 
     # Semantic retrieval first (fast, scalable)
     sem_hits = _store_search(question, n=10) if _STORE_OK else []
-    sem_names = {h["name"].lower() for h in sem_hits}
+    sem_names = {_s(h["name"]).lower() for h in sem_hits}
 
     matched = {"characters": [], "places": [], "concepts": []}
     for cat in ("characters", "places", "concepts"):
         for entity in lore[cat]:
-            name = (entity.get("name") or "").lower()
+            name = _s(entity.get("name")).lower()
             if _entity_matches(entity, terms) or name in sem_names:
                 matched[cat].append(entity)
 
@@ -609,7 +616,7 @@ def query_entity(question: str, lore: dict) -> str:
 
     # Character relations from how.json for matched characters
     char_names_matched = {
-        c.get("name", "").lower() for c in matched["characters"]
+        _s(c.get("name")).lower() for c in matched["characters"]
     }
     if char_names_matched:
         rel_lines = []
@@ -618,8 +625,8 @@ def query_entity(question: str, lore: dict) -> str:
                 continue
             how = _load_json(scene_dir / "how.json")
             for rel in (how.get("character_relations") or []):
-                frm = (rel.get("from_char") or "").lower()
-                to  = (rel.get("to_char") or "").lower()
+                frm = _s(rel.get("from_char")).lower()
+                to  = _s(rel.get("to_char")).lower()
                 if frm in char_names_matched or to in char_names_matched:
                     rel_lines.append(
                         f"  {frm} → {to} ({rel.get('relation_type')}, {rel.get('sentiment')}): "
@@ -634,8 +641,8 @@ def query_entity(question: str, lore: dict) -> str:
     relevant_axes = [
         a for a in axes
         if any(
-            t in " ".join(a.get("elements") or []).lower() or
-            t in (a.get("name") or "").lower()
+            t in " ".join(_s(x) for x in (a.get("elements") or [])).lower() or
+            t in _s(a.get("name")).lower()
             for t in terms
         )
     ]
@@ -684,8 +691,8 @@ def query_arc(question: str, lore: dict) -> str:
     if not target and _STORE_OK:
         hits = search_chars(question, n=1)
         if hits:
-            hit_name = hits[0]["name"].lower()
-            target = next((c for c in lore["characters"] if c.get("name","").lower() == hit_name), None)
+            hit_name = _s(hits[0]["name"]).lower()
+            target = next((c for c in lore["characters"] if _s(c.get("name")).lower() == hit_name), None)
     if not target:
         return f"Character not identified. Terms detected: {terms}"
 
@@ -699,14 +706,14 @@ def query_arc(question: str, lore: dict) -> str:
         who = _load_json(ANALYSIS_DIR / sid / "who.json")
         details = who.get("details") or []
         char_detail = next(
-            (d for d in details if char_name.lower() in (d.get("canonical_name") or "").lower()),
+            (d for d in details if char_name.lower() in _s(d.get("canonical_name")).lower()),
             {}
         )
         how = _load_json(ANALYSIS_DIR / sid / "how.json")
         rels = [
             r for r in (how.get("character_relations") or [])
-            if char_name.lower() in (r.get("from_char") or "").lower()
-            or char_name.lower() in (r.get("to_char") or "").lower()
+            if char_name.lower() in _s(r.get("from_char")).lower()
+            or char_name.lower() in _s(r.get("to_char")).lower()
         ]
         lines = [f"\n[{sid}]"]
         if char_detail.get("description_psychological"):
@@ -715,7 +722,7 @@ def query_arc(question: str, lore: dict) -> str:
             lines.append(f"  beliefs: {', '.join(char_detail['beliefs'][:3])}")
         for r in rels[:3]:
             lines.append(
-                f"  → {r.get('to_char') if r.get('from_char','').lower() in char_name.lower() else r.get('from_char')}"
+                f"  → {r.get('to_char') if _s(r.get('from_char')).lower() in char_name.lower() else r.get('from_char')}"
                 f" ({r.get('relation_type')}, {r.get('sentiment')})"
             )
         context_parts.append("\n".join(lines))
@@ -731,14 +738,14 @@ def query_knows(question: str, lore: dict) -> str:
     if not target and _STORE_OK:
         hits = search_chars(question, n=1)
         if hits:
-            hit_name = hits[0]["name"].lower()
-            target = next((c for c in lore["characters"] if c.get("name","").lower() == hit_name), None)
+            hit_name = _s(hits[0]["name"]).lower()
+            target = next((c for c in lore["characters"] if _s(c.get("name")).lower() == hit_name), None)
     if not target:
         return f"Character not identified. Terms detected: {terms}"
 
     char_name   = target.get("name", "")
     char_scenes = set(str(s) for s in (target.get("appearances") or []))
-    related     = {c.lower() for c in (target.get("related_characters") or [])}
+    related     = {_s(c).lower() for c in (target.get("related_characters") or [])}
 
     known, unknown = [], []
     for scene_dir in sorted(ANALYSIS_DIR.iterdir()):
@@ -750,7 +757,7 @@ def query_knows(question: str, lore: dict) -> str:
             if ev.get("type") not in ("revelation", "decision"):
                 continue
             desc  = ev.get("description", "")
-            chars = [c.lower() for c in (ev.get("characters") or [])]
+            chars = [_s(c).lower() for c in (ev.get("characters") or [])]
             if sid in char_scenes:
                 known.append(f"[{sid}] {desc}")
             else:
@@ -860,8 +867,8 @@ def query_continuity(question: str, lore: dict) -> str:
         for sid in (char.get("appearances") or []):
             who = _load_json(ANALYSIS_DIR / str(sid) / "who.json")
             for d in (who.get("details") or []):
-                if name.lower() in (d.get("canonical_name") or "").lower():
-                    phys = d.get("description_physical", "").strip()
+                if name.lower() in _s(d.get("canonical_name")).lower():
+                    phys = _s(d.get("description_physical")).strip()
                     if phys:
                         descs.append((str(sid), phys))
         if len(descs) >= 2:
@@ -880,8 +887,8 @@ def query_continuity(question: str, lore: dict) -> str:
         for sid in (place.get("appearances") or []):
             where = _load_json(ANALYSIS_DIR / str(sid) / "where.json")
             for loc in (where.get("details") or []):
-                if name.lower() in (loc.get("canonical_name") or "").lower():
-                    desc = loc.get("description", "").strip()
+                if name.lower() in _s(loc.get("canonical_name")).lower():
+                    desc = _s(loc.get("description")).strip()
                     if desc:
                         descs.append((str(sid), desc))
         if len(descs) >= 2:
@@ -1046,7 +1053,7 @@ def query_voice(question: str, lore: dict) -> str:
         return "\n".join(lines)
 
     import re as _re
-    slug = _re.sub(r'\s+', '_', target.get("name", "").lower().strip())
+    slug = _re.sub(r'\s+', '_', _s(target.get("name")).lower().strip())
     voice = _load_yaml(voices_dir / f"{slug}.yaml")
     if not voice:
         return f"No voice profile for {target.get('name')} yet. Run the pipeline on their scenes first."
@@ -1096,8 +1103,8 @@ def query_catchup(question: str, lore: dict) -> str:
     if not target and _STORE_OK:
         hits = search_chars(question, n=1)
         if hits:
-            hit_name = hits[0]["name"].lower()
-            target = next((c for c in lore["characters"] if c.get("name","").lower() == hit_name), None)
+            hit_name = _s(hits[0]["name"]).lower()
+            target = next((c for c in lore["characters"] if _s(c.get("name")).lower() == hit_name), None)
     if not target:
         return f"Character not identified. Terms: {terms}"
 
@@ -1236,8 +1243,8 @@ def query_goals(question: str, lore: dict) -> str:
     if not target and _STORE_OK:
         hits = search_chars(question, n=1)
         if hits:
-            hit_name = hits[0]["name"].lower()
-            target = next((c for c in lore["characters"] if c.get("name","").lower() == hit_name), None)
+            hit_name = _s(hits[0]["name"]).lower()
+            target = next((c for c in lore["characters"] if _s(c.get("name")).lower() == hit_name), None)
     if not target:
         return f"Character not identified. Terms: {terms}"
 
@@ -1252,8 +1259,8 @@ def query_goals(question: str, lore: dict) -> str:
             if ev.get("type") in ("decision", "revelation"):
                 decisions.append(f"[{sid}] {ev.get('description','')[:100]}")
         for rel in (how.get("character_relations") or []):
-            if char_name.lower() in (rel.get("from_char","") + rel.get("to_char","")).lower():
-                other = rel.get("to_char") if char_name.lower() in rel.get("from_char","").lower() else rel.get("from_char")
+            if char_name.lower() in (_s(rel.get("from_char")) + _s(rel.get("to_char"))).lower():
+                other = rel.get("to_char") if char_name.lower() in _s(rel.get("from_char")).lower() else rel.get("from_char")
                 relations.append(f"{other}: {rel.get('relation_type')} ({rel.get('sentiment')})")
 
     return call_llm(
@@ -1281,20 +1288,20 @@ def query_irony(question: str, lore: dict) -> str:
             continue
         what = _load_json(scene_dir / "what.json")
         who  = _load_json(scene_dir / "who.json")
-        chars_present = set(c.lower() for c in (who.get("characters") or []))
+        chars_present = set(_s(c).lower() for c in (who.get("characters") or []))
         for ev in (what.get("events") or []):
             if ev.get("type") in ("revelation", "decision"):
                 revelations.append({
                     "scene":   scene_dir.name,
                     "desc":    ev.get("description",""),
                     "present": chars_present,
-                    "chars":   set(c.lower() for c in (ev.get("characters") or [])),
+                    "chars":   set(_s(c).lower() for c in (ev.get("characters") or [])),
                 })
 
     # Build: char → all scenes they appeared in
     char_scenes: dict[str, set] = {}
     for c in lore["characters"]:
-        name = c.get("name","").lower()
+        name = _s(c.get("name")).lower()
         char_scenes[name] = set(str(s) for s in (c.get("appearances") or []))
 
     irony_cases = []
@@ -1307,7 +1314,7 @@ def query_irony(question: str, lore: dict) -> str:
                 continue
             # Check if this char interacts with knowers in other scenes
             if not (knowers & set(
-                c.lower() for c in
+                _s(c).lower() for c in
                 (lore["characters"][0].get("related_characters", []) if lore["characters"] else [])
             )):
                 # simpler: char appears in other scenes, is a known character
@@ -1568,8 +1575,8 @@ def query_roleplay(question: str, lore: dict) -> str:
     if not target and _STORE_OK:
         hits = search_chars(question, n=1)
         if hits:
-            hit_name = hits[0]["name"].lower()
-            target = next((c for c in lore["characters"] if (c.get("name","").lower() == hit_name)), None)
+            hit_name = _s(hits[0]["name"]).lower()
+            target = next((c for c in lore["characters"] if (_s(c.get("name")).lower() == hit_name)), None)
     if not target:
         return (
             f"Could not identify a character in the question. Terms detected: {terms}\n"
@@ -1625,8 +1632,8 @@ def query_react(question: str, lore: dict) -> str:
     if not target and _STORE_OK:
         hits = search_chars(question, n=1)
         if hits:
-            hit_name = hits[0]["name"].lower()
-            target = next((c for c in lore["characters"] if (c.get("name","").lower() == hit_name)), None)
+            hit_name = _s(hits[0]["name"]).lower()
+            target = next((c for c in lore["characters"] if (_s(c.get("name")).lower() == hit_name)), None)
     if not target:
         return (
             f"Could not identify a character in the question. Terms detected: {terms}\n"
