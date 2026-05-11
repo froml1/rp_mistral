@@ -10,14 +10,8 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
-from steps.manual_lore import load_manual_char, merge_manual_into_char
 from steps.synthesis import current_scene_synthesis
 from steps.scene_patch import write_enrichment, chunk_messages
-from lore_summary import update_summary
-try:
-    from store import upsert as _store_upsert
-except Exception:
-    def _store_upsert(*a, **kw): pass  # store optional at analysis time
 
 _PRONOUNS = {
     # English
@@ -79,7 +73,7 @@ STRICT RULE: only extract characters who SPEAK or perform *actions* directly in 
 Do NOT extract characters who are only mentioned, referenced, or talked about by others.
 For each character PHYSICALLY PRESENT AND ACTIVE in this scene:
 
-Identity: canonical_name (lowercase full name), author (Discord username who plays this character — from the hints above), gender (male|female|non-binary|unknown), age (e.g. "young adult", "elderly", "immortal", "unknown"), species (e.g. "human", "elf", "demon", "unknown"), appellations (all references), description_physical, job, main_locations
+Identity: canonical_name (lowercase full name), family_name (family/clan/house name only, null if not known), author (Discord username who plays this character — from the hints above), gender (male|female|non-binary|unknown), age (e.g. "young adult", "elderly", "immortal", "unknown"), species (e.g. "human", "elf", "demon", "unknown"), appellations (all references), description_physical (VISIBLE body/face/clothing ONLY. null if no physical appearance is shown), job, main_locations
 affiliations: factions, guilds, orders the character belongs to (list of names)
 relations: list of relationships as [{{"character": "name", "relation": "type"}}] (e.g. frère, allié, ennemi)
 goals: {{"short_term": ["visible objective in this scene"], "long_term": ["deeper ambition if mentioned"]}}
@@ -116,8 +110,8 @@ JSON:
   "author_to_character": {{}},
   "ooc_messages": [],
   "characters": [{{
-    "canonical_name": "", "author": "", "gender": "unknown", "age": "unknown", "species": "unknown",
-    "appellations": [], "description_physical": "", "job": "", "main_locations": [],
+    "canonical_name": "", "family_name": null, "author": "", "gender": "unknown", "age": "unknown", "species": "unknown",
+    "appellations": [], "description_physical": null, "job": "", "main_locations": [],
     "affiliations": [], "relations": [{{"character": "", "relation": ""}}],
     "goals": {{"short_term": [], "long_term": []}},
     "wounds": [], "secrets": [],
@@ -149,14 +143,6 @@ def _slug(name: str) -> str:
 
 
 # ── Character helpers ─────────────────────────────────────────────────────────
-
-def _load_char_yaml(chars_dir: Path, name: str) -> dict:
-    path = chars_dir / f"{_slug(name)}.yaml"
-    if path.exists():
-        with open(path, encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
-    return {}
-
 
 def _save_char_yaml(chars_dir: Path, name: str, data: dict):
     chars_dir.mkdir(parents=True, exist_ok=True)
@@ -224,6 +210,7 @@ def _merge_emotional_polarity(existing: dict, new_ep: dict) -> dict:
 def _merge_char(existing: dict, extracted: dict, scene_id: str) -> dict:
     merged = dict(existing)
     merged.setdefault("name", extracted.get("canonical_name", ""))
+    merged.setdefault("family_name", None)
     for field in ("appellations", "beliefs", "likes", "dislikes", "main_locations", "misc", "appearances",
                   "affiliations", "wounds", "secrets"):
         merged.setdefault(field, [])
@@ -244,6 +231,9 @@ def _merge_char(existing: dict, extracted: dict, scene_id: str) -> dict:
         new_val = (extracted.get(single_field) or "").strip().lower()
         if new_val and new_val != "unknown":
             merged[single_field] = new_val
+    new_fn = (extracted.get("family_name") or "").strip().lower() or None
+    if new_fn and not merged.get("family_name"):
+        merged["family_name"] = new_fn
     for field in ("beliefs", "likes", "dislikes", "main_locations", "misc", "affiliations", "wounds", "secrets"):
         _merge_list(merged[field], extracted.get(field) or [])
     # Merge goals
@@ -260,29 +250,6 @@ def _merge_char(existing: dict, extracted: dict, scene_id: str) -> dict:
         merged["appearances"].append(scene_id)
     merged.setdefault("first_appearance", scene_id)
     return merged
-
-def _enrich_char_from_lore(extracted: dict, existing: dict) -> dict:
-    """Merge existing lore INTO the extracted char so downstream steps have full profile.
-    Extracted (scene-specific) data takes priority; lore fills gaps only."""
-    enriched = dict(extracted)
-    for field in ("description_physical", "description_psychological", "job", "gender", "age", "species"):
-        if not enriched.get(field) or enriched[field] in ("unknown", ""):
-            lore_val = existing.get(field) or ""
-            if lore_val and lore_val not in ("unknown", ""):
-                enriched[field] = lore_val
-    for field in ("likes", "dislikes", "beliefs", "misc", "affiliations", "wounds", "secrets", "main_locations"):
-        lore_items = existing.get(field) or []
-        scene_items = enriched.get(field) or []
-        seen = {str(x).lower() for x in scene_items}
-        enriched[field] = list(scene_items)
-        for item in lore_items:
-            if str(item).lower() not in seen:
-                enriched[field].append(item)
-                seen.add(str(item).lower())
-    if not enriched.get("goals", {}).get("short_term") and not enriched.get("goals", {}).get("long_term"):
-        if existing.get("goals"):
-            enriched["goals"] = existing["goals"]
-    return enriched
 
 
 # ── Main entry ────────────────────────────────────────────────────────────────
@@ -401,6 +368,8 @@ def _merge_entities(results: list[dict]) -> dict:
                     v = (c.get(sf) or "").strip().lower()
                     if v and v != "unknown" and not ex.get(sf):
                         ex[sf] = v
+                if c.get("family_name") and not ex.get("family_name"):
+                    ex["family_name"] = c["family_name"]
 
     # Merge concepts by canonical_name
     concept_map: dict[str, dict] = {}
@@ -534,16 +503,8 @@ def run_entities(scene_file: Path, analysis_dir: Path, chars_dir: Path, concepts
             c["author"] = char_to_author.get(name, "")
         characters.append(c)
 
-    for i, char in enumerate(characters):
-        existing = _load_char_yaml(chars_dir, char["canonical_name"])
-        char = _enrich_char_from_lore(char, existing)
-        characters[i] = char
-        merged   = _merge_char(existing, char, scene_id)
-        merged   = merge_manual_into_char(merged, load_manual_char(char["canonical_name"]))
-        _save_char_yaml(chars_dir, char["canonical_name"], merged)
-        summary  = update_summary(chars_dir / f"{_slug(char['canonical_name'])}.yaml", "characters")
-        _store_upsert("characters", merged["name"], summary)
-        print(f"    character updated: {char['canonical_name']}")
+    for char in characters:
+        print(f"    character extracted: {char['canonical_name']}")
 
     who_out = {"characters": [c.get("canonical_name") for c in characters], "details": characters}
 

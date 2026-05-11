@@ -20,10 +20,11 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from collections import Counter
 from llm import call_llm_json
-from steps.analyze_who   import _merge_char,    _save_char_yaml,    _PERSONALITY_AXES, _COMPETENCY_AXES
-from steps.analyze_where import _merge_place,   _save_place_yaml
-from steps.analyze_which import _merge_concept, _save_concept_yaml, _slug
+from steps.analyze_entities import _merge_char, _save_char_yaml, _PERSONALITY_AXES, _COMPETENCY_AXES
+from steps.analyze_context  import _merge_place, _save_place_yaml
+from steps.analyze_which    import _merge_concept, _save_concept_yaml, _slug
 from steps.manual_lore   import (
     load_manual_char, load_all_manual_chars, merge_manual_into_char,
     load_manual_place, load_all_manual_places, merge_manual_into_place,
@@ -37,6 +38,9 @@ try:
 except Exception:
     def _store_upsert(*a, **kw): pass
     def _store_reindex(*a, **kw): pass
+
+
+_COMPETENCY_RANK = {"none": 0, "low": 1, "medium": 2, "high": 3, "exceptional": 4}
 
 
 # ── Name normalisation & matching ─────────────────────────────────────────────
@@ -172,6 +176,66 @@ def _cluster(
     return result
 
 
+def _build_author_anchors(raw_extractions: dict[str, list[tuple[str, dict]]]) -> dict[str, list[str]]:
+    """
+    Same Discord author + same first forename token → likely same character.
+    Returns extra {canonical: [alias, ...]} to inject into manual_anchors.
+    """
+    author_to_names: dict[str, list[str]] = {}
+    for name_l, entries in raw_extractions.items():
+        for _, extraction in entries:
+            author = (extraction.get("author") or "").lower().strip()
+            if author:
+                if name_l not in author_to_names.setdefault(author, []):
+                    author_to_names[author].append(name_l)
+
+    anchors: dict[str, list[str]] = {}
+    for author, names in author_to_names.items():
+        # Group by first token of normalised name
+        groups: dict[str, list[str]] = {}
+        for name in names:
+            first = _norm(name).split()[0] if _norm(name).split() else ""
+            if first:
+                groups.setdefault(first, []).append(name)
+        for group in groups.values():
+            if len(group) < 2:
+                continue
+            # Longest normalised name elected canonical
+            canonical = max(group, key=lambda n: len(_norm(n)))
+            for v in group:
+                if v != canonical:
+                    anchors.setdefault(canonical, [])
+                    if v not in anchors[canonical]:
+                        anchors[canonical].append(v)
+    return anchors
+
+
+def _build_appellation_anchors(raw_extractions: dict[str, list[tuple[str, dict]]]) -> dict[str, list[str]]:
+    """
+    If name A (canonical) appears as an appellation of name B's extractions → A is an alias of B.
+    """
+    all_canonical = set(raw_extractions.keys())
+    name_to_apps: dict[str, set[str]] = {}
+    for name_l, entries in raw_extractions.items():
+        for _, extraction in entries:
+            for app in (extraction.get("appellations") or []):
+                a_l = str(app).lower().strip()
+                if len(a_l) >= 4:
+                    name_to_apps.setdefault(name_l, set()).add(a_l)
+
+    anchors: dict[str, list[str]] = {}
+    for name_b, apps in name_to_apps.items():
+        for app in apps:
+            if app in all_canonical and app != name_b:
+                # app is also a standalone canonical name → merge under the longer one
+                canonical = max([name_b, app], key=lambda n: len(_norm(n)))
+                alias = app if canonical == name_b else name_b
+                anchors.setdefault(canonical, [])
+                if alias not in anchors[canonical]:
+                    anchors[canonical].append(alias)
+    return anchors
+
+
 # ── LLM disambiguation pass (optional) ───────────────────────────────────────
 
 _DISAMBIG_PROMPT = """\
@@ -241,6 +305,172 @@ def _load_analysis(analysis_dir: Path, filename: str) -> list[tuple[str, dict]]:
     return results
 
 
+# ── Majority-vote merge helpers ───────────────────────────────────────────────
+
+def _majority_merge_chars(all_extractions: list[tuple[str, dict]]) -> dict:
+    """
+    Merge multiple (scene_id, extraction) tuples into one canonical character dict.
+    - Categorical scalars (job, gender, age, species, author, family_name): majority vote
+    - Text descriptions: longest non-empty value
+    - Lists: union
+    - Personality axes: mean over all occurrences
+    - Competency axes: keep highest
+    - Emotional polarity: aggregate
+    """
+    merged: dict = {}
+
+    # Categorical scalars: majority vote
+    for field in ("job", "gender", "age", "species", "author", "family_name"):
+        values = [
+            (e.get(field) or "").strip().lower()
+            for _, e in all_extractions
+            if (e.get(field) or "").strip().lower() not in ("", "unknown")
+        ]
+        merged[field] = Counter(values).most_common(1)[0][0] if values else ""
+
+    # Text descriptions: longest non-empty
+    for field in ("description_physical", "description_psychological"):
+        best = ""
+        for _, e in all_extractions:
+            v = (e.get(field) or "").strip().lower()
+            if v and len(v) > len(best):
+                best = v
+        merged[field] = best
+
+    # List fields: union (preserve insertion order)
+    for field in ("appellations", "beliefs", "likes", "dislikes", "main_locations",
+                  "affiliations", "wounds", "secrets", "misc"):
+        seen: set[str] = set()
+        result: list[str] = []
+        for _, e in all_extractions:
+            for item in (e.get(field) or []):
+                s = str(item).lower().strip()
+                if s and s not in seen:
+                    result.append(s)
+                    seen.add(s)
+        merged[field] = result
+
+    # Relations: union by (character, relation)
+    seen_rels: set[tuple[str, str]] = set()
+    rels: list[dict] = []
+    for _, e in all_extractions:
+        for r in (e.get("relations") or []):
+            if not isinstance(r, dict) or not r.get("character"):
+                continue
+            key = (r["character"].lower(), r.get("relation", "").lower())
+            if key not in seen_rels:
+                rels.append({"character": r["character"].lower(), "relation": r.get("relation", "").lower()})
+                seen_rels.add(key)
+    merged["relations"] = rels
+
+    # Goals: union
+    goals: dict[str, list] = {"short_term": [], "long_term": []}
+    for sub in ("short_term", "long_term"):
+        seen_g: set[str] = set()
+        for _, e in all_extractions:
+            for item in ((e.get("goals") or {}).get(sub) or []):
+                s = str(item).lower().strip()
+                if s and s not in seen_g:
+                    goals[sub].append(s)
+                    seen_g.add(s)
+    merged["goals"] = goals
+
+    # Personality axes: mean
+    axis_sums: dict[str, float] = {}
+    axis_counts: dict[str, int] = {}
+    for _, e in all_extractions:
+        for axis in _PERSONALITY_AXES:
+            v = (e.get("personality_axes") or {}).get(axis)
+            if v is None:
+                continue
+            try:
+                v = int(v)
+                axis_sums[axis] = axis_sums.get(axis, 0.0) + v
+                axis_counts[axis] = axis_counts.get(axis, 0) + 1
+            except (TypeError, ValueError):
+                pass
+    merged["personality_axes"] = {
+        axis: round(axis_sums[axis] / axis_counts[axis])
+        for axis in axis_sums
+    }
+
+    # Competency axes: keep highest
+    comp: dict[str, str] = {}
+    for _, e in all_extractions:
+        for axis in _COMPETENCY_AXES:
+            v = ((e.get("competency_axes") or {}).get(axis) or "").lower()
+            if not v:
+                continue
+            if axis not in comp or _COMPETENCY_RANK.get(v, 0) > _COMPETENCY_RANK.get(comp[axis], 0):
+                comp[axis] = v
+    merged["competency_axes"] = comp
+
+    # Emotional polarity
+    emotions: list[str] = []
+    triggers: list[str] = []
+    ranges: list[str] = []
+    for _, e in all_extractions:
+        ep = e.get("emotional_polarity") or {}
+        emotions.extend((ep.get("dominant_emotions") or []))
+        triggers.extend((ep.get("emotional_triggers") or []))
+        if ep.get("emotional_range"):
+            ranges.append(ep["emotional_range"])
+    merged["emotional_polarity"] = {
+        "dominant_emotions": list(dict.fromkeys(str(x).lower() for x in emotions))[-5:],
+        "emotional_range":   Counter(ranges).most_common(1)[0][0] if ranges else "moderate",
+        "emotional_triggers": list(dict.fromkeys(str(x).lower() for x in triggers)),
+    }
+
+    # Appearances
+    scene_ids = [sid for sid, _ in all_extractions]
+    merged["appearances"] = sorted(set(scene_ids))
+    merged["first_appearance"] = min(scene_ids) if scene_ids else ""
+
+    return merged
+
+
+def _majority_merge_places(all_extractions: list[tuple[str, dict]]) -> dict:
+    """
+    Merge multiple (scene_id, extraction) tuples into one canonical place dict.
+    - Categorical scalars (type, atmosphere, control, access): majority vote
+    - description: longest non-empty
+    - Lists: union
+    """
+    merged: dict = {}
+
+    for field in ("type", "atmosphere", "control", "access"):
+        values = [
+            (e.get(field) or "").strip().lower()
+            for _, e in all_extractions
+            if (e.get(field) or "").strip().lower() not in ("", "unknown", "other")
+        ]
+        merged[field] = Counter(values).most_common(1)[0][0] if values else ""
+
+    best_desc = ""
+    for _, e in all_extractions:
+        v = (e.get("description") or "").strip().lower()
+        if v and len(v) > len(best_desc):
+            best_desc = v
+    merged["description"] = best_desc
+
+    for field in ("appellations", "attributes", "known_inhabitants"):
+        seen: set[str] = set()
+        result: list[str] = []
+        for _, e in all_extractions:
+            for item in (e.get(field) or []):
+                s = str(item).lower().strip()
+                if s and s not in seen:
+                    result.append(s)
+                    seen.add(s)
+        merged[field] = result
+
+    scene_ids = [sid for sid, _ in all_extractions]
+    merged["appearances"] = sorted(set(scene_ids))
+    merged["first_appearance"] = min(scene_ids) if scene_ids else ""
+
+    return merged
+
+
 # ── Entity synthesis: chars ───────────────────────────────────────────────────
 
 def _synthesize_chars(
@@ -267,8 +497,17 @@ def _synthesize_chars(
         print("  [who] no extractions found")
         return 0
 
-    # Cluster
+    # Extend manual anchors with data-derived signals
     manual_anchors = {k: (v.get("appellations") or []) for k, v in manual_chars.items()}
+    author_anch = _build_author_anchors(raw_extractions)
+    app_anch    = _build_appellation_anchors(raw_extractions)
+    for extra in (author_anch, app_anch):
+        for k, vs in extra.items():
+            if k in manual_anchors:
+                manual_anchors[k] = list(dict.fromkeys(manual_anchors[k] + vs))
+            else:
+                manual_anchors[k] = vs
+
     clusters = _cluster(list(raw_extractions.keys()), manual_anchors)
     print(f"  [who] {len(raw_extractions)} raw names → {len(clusters)} entities")
 
@@ -286,24 +525,23 @@ def _synthesize_chars(
             }
             clusters = {**clusters, **_llm_disambiguate(uncertain, contexts)}
 
-    # Merge all clusters into memory first, then clean cross-contamination
+    # Merge all clusters using majority-vote
     final_chars: dict[str, dict] = {}
     for canonical, variants in clusters.items():
-        merged: dict = {}
+        all_extractions = []
         for v in variants:
-            for scene_id, extraction in raw_extractions.get(v, []):
-                merged = _merge_char(merged, extraction, scene_id)
+            all_extractions.extend(raw_extractions.get(v, []))
 
-        if not merged:
+        if not all_extractions:
             continue
 
+        merged = _majority_merge_chars(all_extractions)
         merged["name"] = canonical
         merged["aliases"] = sorted({v for v in variants if v != canonical.lower()})
         merged = merge_manual_into_char(merged, load_manual_char(canonical))
         final_chars[canonical] = merged
 
-    # Remove appellations that exactly match another character's canonical name.
-    # Prevents LLM co-occurrence confusion (e.g. "antoine" ending up in Azael's appellations).
+    # Remove appellations that are another character's canonical name
     all_canonicals_lower = {c.lower() for c in final_chars}
     for canonical, char_data in final_chars.items():
         own_lower = canonical.lower()
@@ -350,20 +588,26 @@ def _synthesize_places(
         print("  [where] no extractions found")
         return 0
 
+    # Extend manual anchors with appellation-based signals (no author for places)
     manual_anchors = {k: (v.get("appellations") or []) for k, v in manual_places.items()}
+    app_anch = _build_appellation_anchors(raw_extractions)
+    for k, vs in app_anch.items():
+        if k in manual_anchors:
+            manual_anchors[k] = list(dict.fromkeys(manual_anchors[k] + vs))
+        else:
+            manual_anchors[k] = vs
+
     clusters = _cluster(list(raw_extractions.keys()), manual_anchors)
     print(f"  [where] {len(raw_extractions)} raw names → {len(clusters)} places")
 
     count = 0
     for canonical, variants in clusters.items():
-        merged: dict = {}
+        all_extractions = []
         for v in variants:
-            for scene_id, extraction in raw_extractions.get(v, []):
-                merged = _merge_place(merged, extraction, scene_id)
-
-        if not merged:
+            all_extractions.extend(raw_extractions.get(v, []))
+        if not all_extractions:
             continue
-
+        merged = _majority_merge_places(all_extractions)
         merged["name"] = canonical
         merged["aliases"] = sorted({v for v in variants if v != canonical.lower()})
         merged = merge_manual_into_place(merged, load_manual_place(canonical))

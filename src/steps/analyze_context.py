@@ -10,13 +10,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm import call_llm_json
-from steps.manual_lore import load_manual_place, merge_manual_into_place
 from steps.scene_patch import write_enrichment, chunk_messages
-from lore_summary import update_summary
-try:
-    from store import upsert as _store_upsert
-except Exception:
-    def _store_upsert(*a, **kw): pass
 
 
 def _is_valid_json(path: Path) -> bool:
@@ -89,14 +83,6 @@ def _slug(name: str) -> str:
     return re.sub(r'\s+', '_', name.lower().strip())
 
 
-def _load_place_yaml(places_dir: Path, canonical_name: str) -> dict:
-    path = places_dir / f"{_slug(canonical_name)}.yaml"
-    if path.exists():
-        with open(path, encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
-    return {}
-
-
 def _save_place_yaml(places_dir: Path, canonical_name: str, data: dict):
     places_dir.mkdir(parents=True, exist_ok=True)
     path = places_dir / f"{_slug(canonical_name)}.yaml"
@@ -142,28 +128,6 @@ def _merge_place(existing: dict, extracted: dict, scene_id: str) -> dict:
     merged.setdefault("first_appearance", scene_id)
     return merged
 
-
-def _enrich_place_from_lore(extracted: dict, existing: dict) -> dict:
-    """Fill gaps in the freshly-extracted location with data from existing lore. Extracted data takes priority."""
-    enriched = dict(extracted)
-    for field in ("type", "atmosphere", "control", "access"):
-        v = (enriched.get(field) or "").strip().lower()
-        if not v or v in ("unknown", "other", ""):
-            lore_val = (existing.get(field) or "").strip().lower()
-            if lore_val and lore_val not in ("unknown", "other", ""):
-                enriched[field] = lore_val
-    if not enriched.get("description") and existing.get("description"):
-        enriched["description"] = existing["description"]
-    for lst_field in ("appellations", "attributes", "known_inhabitants"):
-        lore_items = existing.get(lst_field) or []
-        scene_items = enriched.get(lst_field) or []
-        seen = {str(x).lower() for x in scene_items}
-        enriched[lst_field] = list(scene_items)
-        for item in lore_items:
-            if str(item).lower() not in seen:
-                enriched[lst_field].append(item)
-                seen.add(str(item).lower())
-    return enriched
 
 
 def _merge_context(results: list[dict]) -> dict:
@@ -276,16 +240,8 @@ def run_context(scene_file: Path, analysis_dir: Path, places_dir: Path, lore_dir
         and not (l["canonical_name"] or "").lower().strip().startswith("unknown")
     ]
 
-    for i, loc in enumerate(locations):
-        existing = _load_place_yaml(places_dir, loc["canonical_name"])
-        loc = _enrich_place_from_lore(loc, existing)
-        locations[i] = loc
-        merged   = _merge_place(existing, loc, scene_id)
-        merged   = merge_manual_into_place(merged, load_manual_place(loc["canonical_name"]))
-        _save_place_yaml(places_dir, loc["canonical_name"], merged)
-        summary  = update_summary(places_dir / f"{_slug(loc['canonical_name'])}.yaml", "places")
-        _store_upsert("places", merged["name"], summary)
-        print(f"    place updated: {loc['canonical_name']}")
+    for loc in locations:
+        print(f"    place extracted: {loc['canonical_name']}")
 
     where_out = {
         "locations":        [l.get("canonical_name") for l in locations],
